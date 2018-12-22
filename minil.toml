@@ -1,0 +1,7 @@
+name = "Mojo-Iutils"
+# badges = ["travis"]
+authority="cpan:DMANTO"
+
+module_maker="ModuleBuildTiny"
+static_install = "auto"
+
