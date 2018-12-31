@@ -1,0 +1,36 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_PROGRAM_AUTHOR	Darren Hiebert	/dhiebert@users.sourceforge.net/
+!_TAG_PROGRAM_NAME	Exuberant Ctags	//
+!_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
+!_TAG_PROGRAM_VERSION	5.8	//
+Mojo::Iutils	blib/lib/Mojo/Iutils.pm	1;"	p
+Mojo::Iutils	lib/Mojo/Iutils.pm	1;"	p
+Mojo::Iutils::_bcast	lib/Mojo/Iutils.pm	186;"	s
+Mojo::Iutils::_get_events_path	lib/Mojo/Iutils.pm	50;"	s
+Mojo::Iutils::_get_vars_path	lib/Mojo/Iutils.pm	38;"	s
+Mojo::Iutils::_init	lib/Mojo/Iutils.pm	216;"	s
+Mojo::Iutils::_read_event	lib/Mojo/Iutils.pm	76;"	s
+Mojo::Iutils::_write_event	lib/Mojo/Iutils.pm	62;"	s
+Mojo::Iutils::gc	blib/lib/Mojo/Iutils.pm	50;"	s
+Mojo::Iutils::gc	lib/Mojo/Iutils.pm	97;"	s
+Mojo::Iutils::get_path	blib/lib/Mojo/Iutils.pm	31;"	s
+Mojo::Iutils::ikeys	blib/lib/Mojo/Iutils.pm	43;"	s
+Mojo::Iutils::ikeys	lib/Mojo/Iutils.pm	90;"	s
+Mojo::Iutils::istash	blib/lib/Mojo/Iutils.pm	61;"	s
+Mojo::Iutils::istash	lib/Mojo/Iutils.pm	108;"	s
+Mojo::Iutils::new	lib/Mojo/Iutils.pm	179;"	s
+_bcast	lib/Mojo/Iutils.pm	186;"	s
+_get_events_path	lib/Mojo/Iutils.pm	50;"	s
+_get_vars_path	lib/Mojo/Iutils.pm	38;"	s
+_init	lib/Mojo/Iutils.pm	216;"	s
+_read_event	lib/Mojo/Iutils.pm	76;"	s
+_write_event	lib/Mojo/Iutils.pm	62;"	s
+gc	blib/lib/Mojo/Iutils.pm	50;"	s
+gc	lib/Mojo/Iutils.pm	97;"	s
+get_path	blib/lib/Mojo/Iutils.pm	31;"	s
+ikeys	blib/lib/Mojo/Iutils.pm	43;"	s
+ikeys	lib/Mojo/Iutils.pm	90;"	s
+istash	blib/lib/Mojo/Iutils.pm	61;"	s
+istash	lib/Mojo/Iutils.pm	108;"	s
+new	lib/Mojo/Iutils.pm	179;"	s
