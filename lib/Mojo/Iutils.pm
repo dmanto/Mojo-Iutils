@@ -17,7 +17,8 @@ use constant {
 	QUEUES_DIR => 'queues',
 	EVENTS_DIR => 'events',
 	CATCH_VALID_TO => 5,
-	CATCH_SAFE_WINDOW => 5
+	CATCH_SAFE_WINDOW => 5,
+	MAGIC_ID => 'IUTILS_MAGIC_str'
 };
 
 has base_dir => sub {
@@ -28,34 +29,34 @@ has events_queue_size => sub {64};
 
 our $VERSION = '0.01';
 our $FTIME; # Fake time, for testing only
-my ($varsdir, $queuesdir, $pubsubsdir, $eventsdir, $vars_semaphore, $events_semaphore);
-my $valid_fname = qr/^[\w\.-]+$/;
-my $enc = Sereal::Encoder->new;
-my $dec = Sereal::Decoder->new;
-my %catched_vars;
+has [qw(varsdir queuesdir pubsubsdir eventsdir vars_semaphore events_semaphore server_port)];
+has 'valid_fname' => sub {qr/^[\w\.-]+$/};
+has enc => sub {state $s = Sereal::Encoder->new};
+has dec => sub {state $s = Sereal::Decoder->new};
+has catched_vars => sub {{}};
 
 
 sub _get_vars_path {
 	my ($self, $key) = @_;
-	die "Key $key not valid" unless $key =~ $valid_fname;
-	unless ($varsdir) { # inicializes $varsdir & $vars_semaphore
-		$varsdir = path($self->base_dir, VARS_DIR );
-		$varsdir->make_path unless -d $varsdir;
-		$vars_semaphore = $varsdir->sibling('vars.lock')->to_string;
+	die "Key $key not valid" unless $key =~ $self->valid_fname;
+	unless ($self->varsdir) { # inicializes $self->varsdir & $self->vars_semaphore
+		$self->varsdir(path($self->base_dir, VARS_DIR ));
+		$self->varsdir->make_path unless -d $self->varsdir;
+		$self->vars_semaphore($self->varsdir->sibling('vars.lock')->to_string);
 	}
-	return $varsdir->child($key)->to_string;
+	return $self->varsdir->child($key)->to_string;
 }
 
 
 sub _get_events_path {
 	my ($self, $n) = @_;
 	die "Emit ID $n not valid" unless $n =~ /^\d+$/; # only integers are valid
-	unless ($eventsdir) { # inicializes $eventsdir & $events_semaphore
-		$eventsdir = path($self->base_dir, EVENTS_DIR );
-		$eventsdir->make_path unless -d $eventsdir;
-		$events_semaphore = $eventsdir->sibling('events.lock')->to_string;
+	unless ($self->eventsdir) { # inicializes $self->eventsdir & $self->events_semaphore
+		$self->eventsdir(path($self->base_dir, EVENTS_DIR ));
+		$self->eventsdir->make_path unless -d $self->eventsdir;
+		$self->events_semaphore($self->eventsdir->sibling('events.lock')->to_string);
 	}
-	return $eventsdir->child(sprintf 'E%07d', $n % $self->events_queue_size)->to_string;
+	return $self->eventsdir->child(sprintf 'E%07d', $n % $self->events_queue_size)->to_string;
 }
 
 
@@ -63,7 +64,7 @@ sub _write_event {
 	my ($self, $event, @args) = @_;
 	my $idx = $self->istash(__events_idx => sub {++$_[0]});
 	my $fname = _get_events_path($self, $idx);
-	my $bytes = sereal_encode_with_object $enc, {i => $idx, e => $event, a => \@args};
+	my $bytes = sereal_encode_with_object $self->enc, {i => $idx, e => $event, a => \@args};
 	open my $wev, '>', $fname or die "Couldn't open event file: $!";
 	binmode $wev;
 	flock($wev, LOCK_EX) or die "Couldn't lock $fname: $!";
@@ -81,7 +82,7 @@ sub _read_event {
 	flock($rev, LOCK_SH) or die "Couldn't lock $fname: $!";
 	my $bytes = do {local $/; <$rev>};
 	close($rev) or die "Couldn't close $fname: $!";
-	my $res = sereal_decode_with_object $dec, $bytes;
+	my $res = sereal_decode_with_object $self->dec, $bytes;
 	$self->emit(error => "Overflow trying to get event $idx") unless $res->{i} == $idx;
 	return $res;
 }
@@ -89,8 +90,8 @@ sub _read_event {
 
 sub ikeys {
 	my $self = shift;
-	$self->_get_vars_path('dummy') unless $varsdir; # initializes $varsdir
-	return $varsdir->list->map('basename')->to_array;
+	$self->_get_vars_path('dummy') unless $self->varsdir; # initializes $self->varsdir
+	return $self->varsdir->list->map('basename')->to_array;
 }
 
 
@@ -98,8 +99,8 @@ sub gc {
 	my $self = shift;
 	$self->istash($_) for @{$self->ikeys};
 	my $ctime = sprintf '%10d', $FTIME // time; # current time, 10 digits number
-	for my $key (keys %catched_vars) {
-		delete $catched_vars{$key} unless $ctime <= $catched_vars{$key}{tstamp} + CATCH_VALID_TO;
+	for my $key (keys %{$self->catched_vars}) {
+		delete $self->catched_vars->{$key} unless $ctime <= $self->catched_vars->{$key}{tstamp} + CATCH_VALID_TO;
 	}
 	return $self;
 }
@@ -113,20 +114,20 @@ sub istash {
 	my $has_to_write = @_ % 2; # odd nmbr of arguments --> write
 	$set_val = $arg unless $cb or !$has_to_write;
 
-	unless (exists $catched_vars{$key} && $ctime <= $catched_vars{$key}{tstamp} + CATCH_VALID_TO) {
+	unless (exists $self->catched_vars->{$key} && $ctime <= $self->catched_vars->{$key}{tstamp} + CATCH_VALID_TO) {
 		my $file = $self->_get_vars_path($key);
-		open(my $sf, '>', $vars_semaphore) or die "Couldn't open $vars_semaphore for write: $!";
-		flock($sf, LOCK_EX) or die "Couldn't lock $vars_semaphore: $!";
+		open(my $sf, '>', $self->vars_semaphore) or die "Couldn't open $self->vars_semaphore for write: $!";
+		flock($sf, LOCK_EX) or die "Couldn't lock $self->vars_semaphore: $!";
 		unless (-f $file){
 			open my $tch, '>', $file or die "Couldn't touch $file: $!";
 			close($tch) or die "Couldn't close $file: $!";
 		}
-		close($sf) or die "Couldn't close $vars_semaphore: $!";
-		$catched_vars{$key}{path} = $file;
+		close($sf) or die "Couldn't close $self->vars_semaphore: $!";
+		$self->catched_vars->{$key}{path} = $file;
 	}
 
 
-	my $fname = $catched_vars{$key}{path}; # path to file
+	my $fname = $self->catched_vars->{$key}{path}; # path to file
 	my $lock_flags = $has_to_write ? LOCK_EX : LOCK_SH;
 	my $old_length;
 	open my $fh, '+<', $fname or die "Couldn't open $fname: $!";
@@ -148,7 +149,7 @@ sub istash {
 		my $expires_set = sprintf '%10d', $opts{expire} // 9999999999;
 		undef $val if $ctime >= $expires_set;
 		if (defined $val) {
-			$catched_vars{$key}{tstamp} = $last_def = $ctime;
+			$self->catched_vars->{$key}{tstamp} = $last_def = $ctime;
 			my $enc_val;
 			if (utf8::is_utf8($val)) {$type=1;$enc_val = encode 'UTF-8', $val}
 			else {$type = 0; $enc_val = $val}
@@ -165,12 +166,12 @@ sub istash {
 
 	close($fh) or die "Couldn't close $fname: $!";
 	$last_def ||= 0;
-	$catched_vars{$key}{tstamp} = $last_def;
+	$self->catched_vars->{$key}{tstamp} = $last_def;
 	unless (defined $val || $ctime <= $last_def + CATCH_VALID_TO + CATCH_SAFE_WINDOW) {
-		open(my $sf, '>', $vars_semaphore) or die "Couldn't open $vars_semaphore for write: $!";
-		flock($sf, LOCK_EX) or die "Couldn't lock $vars_semaphore: $!";
+		open(my $sf, '>', $self->vars_semaphore) or die "Couldn't open $self->vars_semaphore for write: $!";
+		flock($sf, LOCK_EX) or die "Couldn't lock $self->vars_semaphore: $!";
 		unlink $fname if -f $fname;
-		close($sf) or die "Couldn't close $vars_semaphore: $!";
+		close($sf) or die "Couldn't close $self->vars_semaphore: $!";
 	}
 	return $val;
 }
@@ -178,25 +179,66 @@ sub istash {
 
 sub new {
 	my $class = shift->SUPER::new(@_);
-	Mojo::IOLoop->next_tick(\&_init($class));
+	Mojo::IOLoop->next_tick(sub {$class->_init()});
+	Mojo::IOLoop->one_tick while !$class->server_port;
 	return $class;
 }
 
 
-sub _bcast {
-	my ($self, $msg, @ports) = @_;
+sub _send {
+	my ($self, $event, $cb, @args) = @_;
+	my @ports;
+	my $cant;
+	my $idx;
+	if ($event =~ /^__(\d+)_\d+$/) { # unique send
+		@ports = ($1);
+	} else {
+		@ports = split /:/, ($self->istash('__ports') // '');
+	}
 	for my $p (@ports) {
+		$cant++;
+		say STDERR "Con port $p, cant: $cant";
+		if ($p == $self->server_port) { # no need to send
+			say STDERR "Emitira localmente $event, (puerto $p)";
+			$self->emit($event, @args);
+			--$cant or $cb->();
+			next;
+		}
+		$idx //= $self->_write_event($event => @args);
 		my $id;
-		$id = Mojo::IOLoop::client(
+		$id = Mojo::IOLoop->client(
 			{
 				address => '127.0.0.1',
 				port => $p
 			} => sub {
 				my ($loop, $err, $stream) = @_;
+				say STDERR "Conexion o error en $p";
 				if ($stream) {
-					$stream->on(error => sub {});
-					$stream->on(close => sub {$loop->remove($id)});
-					$stream->write($msg);
+					say STDERR "Se conecto";
+					$stream->on(
+						error => sub {
+							my ($stream, $err) = @_;
+							$self->istash(
+								__ports => sub {
+									my %ports = map {$_ => undef} split /:/, (shift // '');
+									delete $ports{$p};
+									return join ':', keys %ports;
+								}
+							);
+							say STDERR "error $err, deberia borrar ${\$id}";
+							$loop->remove($id);
+							--$cant or $cb->();
+						}
+					);
+					$stream->on(close => sub {$loop->remove($id);--$cant or $cb->()});
+					$stream->on(
+						read => sub {
+							my ($stream, $bytes) = @_;
+							say STDERR "Port $p recibio: $bytes";
+						}
+					);
+					$stream->write("$event $idx");
+					say STDERR "Ya escribio en $p";
 				} else {
 					$self->istash(
 						__ports => sub {
@@ -205,10 +247,13 @@ sub _bcast {
 							return join ':', keys %ports;
 						}
 					);
+					say STDERR "Deberia borrar ${\$id}, no encontro $p";
 					$loop->remove($id);
+					--$cant or $cb->();
 				}
 			}
 		);
+		say STDERR "Ya instalo $p, busca siguiente";
 	}
 }
 
@@ -217,7 +262,6 @@ sub _init {
 	my ($self) = @_;
 
 	# first thing to do, define broker msg server
-	my $port;
 	my $id = Mojo::IOLoop->server(
 		{address => '127.0.0.1'} => sub {
 			my ($loop, $stream, $id) = @_;
@@ -225,10 +269,10 @@ sub _init {
 				read => sub {
 					my ($stream, $bytes) = @_;
 
-					# say "$$: en port $port recibio: $bytes";
+					say "$$: en port ${\$self->server_port} recibio: $bytes";
 					$stream->write(
-						"$$: $port $bytes" => sub {
-							shift->close if $bytes =~ /FIN/;
+						MAGIC_ID() => sub {
+							shift->close;
 						}
 					);
 				}
@@ -236,14 +280,15 @@ sub _init {
 		}
 	);
 
-	$port = Mojo::IOLoop->acceptor($id)->port;
+	$self->server_port(Mojo::IOLoop->acceptor($id)->port);
 	$self->istash(
 		__ports => sub {
 			my %ports = map {$_ => undef} split /:/, (shift // '');
-			undef $ports{$port};
+			undef $ports{$self->server_port};
 			return join ':', keys %ports;
 		}
 	);
+	say STDERR "Server port: ${\$self->server_port}";
 }
 
 1;
