@@ -179,15 +179,15 @@ sub istash {
 
 sub new {
 	my $class = shift->SUPER::new(@_);
-	Mojo::IOLoop->next_tick(sub {$class->_init()});
-	Mojo::IOLoop->one_tick while !$class->server_port;
+	$class->_init();
 	return $class;
 }
 
 
-sub _send {
-	my ($self, $event, $cb, @args) = @_;
+sub iemit {
+	my ($self, $event, @args) = @_;
 	my @ports;
+
 	my $cant;
 	my $idx;
 	if ($event =~ /^__(\d+)_\d+$/) { # unique send
@@ -196,12 +196,18 @@ sub _send {
 		@ports = split /:/, ($self->istash('__ports') // '');
 	}
 	for my $p (@ports) {
+
 		$cant++;
-		say STDERR "Con port $p, cant: $cant";
+
+		# say STDERR "Con port $p, cant: $cant";
 		if ($p == $self->server_port) { # no need to send
-			say STDERR "Emitira localmente $event, (puerto $p)";
-			$self->emit($event, @args);
-			--$cant or $cb->();
+			print STDERR "Emitira localmente $event, (puerto $p)";
+			say STDERR $self->{events}{$event} ? ' (agendado)' : '';
+
+			# DANGER $self->{events} hash not docummented in Mojo::EE
+			$self->emit($event, @args) if $self->{events}{$event};
+
+			# --$cant or Mojo::IOLoop->stop;
 			next;
 		}
 		$idx //= $self->_write_event($event => @args);
@@ -214,7 +220,7 @@ sub _send {
 				my ($loop, $err, $stream) = @_;
 				say STDERR "Conexion o error en $p";
 				if ($stream) {
-					say STDERR "Se conecto";
+					say STDERR sprintf "Se conecto desde %d al %d", $self->server_port, $p;
 					$stream->on(
 						error => sub {
 							my ($stream, $err) = @_;
@@ -227,17 +233,24 @@ sub _send {
 							);
 							say STDERR "error $err, deberia borrar ${\$id}";
 							$loop->remove($id);
-							--$cant or $cb->();
+
+							# --$cant or $loop->stop;
 						}
 					);
-					$stream->on(close => sub {$loop->remove($id);--$cant or $cb->()});
+					$stream->on(
+						close => sub {
+							$loop->remove($id)
+
+							  #   ;--$cant or $loop->stop
+						}
+					);
 					$stream->on(
 						read => sub {
 							my ($stream, $bytes) = @_;
 							say STDERR "Port $p recibio: $bytes";
 						}
 					);
-					$stream->write("$event $idx");
+					$stream->write($idx);
 					say STDERR "Ya escribio en $p";
 				} else {
 					$self->istash(
@@ -249,7 +262,8 @@ sub _send {
 					);
 					say STDERR "Deberia borrar ${\$id}, no encontro $p";
 					$loop->remove($id);
-					--$cant or $cb->();
+
+					# --$cant or $loop->stop;
 				}
 			}
 		);
@@ -275,6 +289,15 @@ sub _init {
 							shift->close;
 						}
 					);
+					return unless $bytes && $bytes =~ /^(\d+)$/;
+					my $res = $self->_read_event($1);
+					my $event = $res->{e};
+					my @args = @{$res->{a}};
+					print STDERR "Emitira $event recibido";
+					say STDERR $self->{events}{$event} ? ' (agendado)' : '';
+
+					# DANGER $self->{events} hash not docummented in Mojo::EE
+					$self->emit($event, @args) if $self->{events}{$event};
 				}
 			);
 		}
