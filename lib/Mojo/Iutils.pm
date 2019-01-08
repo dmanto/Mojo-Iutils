@@ -12,24 +12,23 @@ use constant {
 	IUTILS_DIR => 'mojo_iutils_',
 	DEBUG => $ENV{MOJO_IUTILS_DEBUG} || 0,
 	VARS_DIR => 'vars',
-	LOCKS_DIR => 'locks',
-	PUBSUBS_DIR => 'pubsubs',
-	QUEUES_DIR => 'queues',
-	EVENTS_DIR => 'events',
+	BUFFERS_DIR => 'buffers',
 	CATCH_VALID_TO => 5,
 	CATCH_SAFE_WINDOW => 5,
 	MAGIC_ID => 'IUTILS_MAGIC_str'
 };
 
 has base_dir => sub {
-	path(tmpdir, IUTILS_DIR.(eval {scalar getpwuid($<)} || getlogin || 'nobody'))->to_string;
+	my $mode = shift->app_mode // $ENV{MOJO_MODE};
+	my $p = path(tmpdir, IUTILS_DIR . (eval {scalar getpwuid($<)} || getlogin || 'nobody'));
+	return ($mode ? $p->child($mode) : $p)->to_string;
 };
 
-has events_queue_size => sub {64};
+has buffer_size => sub {64};
 
 our $VERSION = '0.01';
 our $FTIME; # Fake time, for testing only
-has [qw(varsdir queuesdir pubsubsdir eventsdir vars_semaphore events_semaphore server_port)];
+has [qw(app_mode varsdir buffersdir vars_semaphore buffers_semaphore server_port)];
 has 'valid_fname' => sub {qr/^[\w\.-]+$/};
 has enc => sub {state $s = Sereal::Encoder->new};
 has dec => sub {state $s = Sereal::Decoder->new};
@@ -48,22 +47,22 @@ sub _get_vars_path {
 }
 
 
-sub _get_events_path {
+sub _get_buffers_path {
 	my ($self, $n) = @_;
 	die "Emit ID $n not valid" unless $n =~ /^\d+$/; # only integers are valid
-	unless ($self->eventsdir) { # inicializes $self->eventsdir & $self->events_semaphore
-		$self->eventsdir(path($self->base_dir, EVENTS_DIR ));
-		$self->eventsdir->make_path unless -d $self->eventsdir;
-		$self->events_semaphore($self->eventsdir->sibling('events.lock')->to_string);
+	unless ($self->buffersdir) { # inicializes $self->buffersdir & $self->buffers_semaphore
+		$self->buffersdir(path($self->base_dir, BUFFERS_DIR ));
+		$self->buffersdir->make_path unless -d $self->buffersdir;
+		$self->buffers_semaphore($self->buffersdir->sibling('buffers.lock')->to_string);
 	}
-	return $self->eventsdir->child(sprintf 'E%07d', $n % $self->events_queue_size)->to_string;
+	return $self->buffersdir->child(sprintf 'E%07d', $n % $self->buffer_size)->to_string;
 }
 
 
 sub _write_event {
 	my ($self, $event, @args) = @_;
-	my $idx = $self->istash(__events_idx => sub {++$_[0]});
-	my $fname = _get_events_path($self, $idx);
+	my $idx = $self->istash(__buffers_idx => sub {++$_[0]});
+	my $fname = _get_buffers_path($self, $idx);
 	my $bytes = sereal_encode_with_object $self->enc, {i => $idx, e => $event, a => \@args};
 	open my $wev, '>', $fname or die "Couldn't open event file: $!";
 	binmode $wev;
@@ -76,7 +75,7 @@ sub _write_event {
 
 sub _read_event {
 	my ($self, $idx) = @_;
-	my $fname = _get_events_path($self,$idx);
+	my $fname = _get_buffers_path($self,$idx);
 	open my $rev, '<', $fname or die "Couldn't open event file: $!";
 	binmode $rev;
 	flock($rev, LOCK_SH) or die "Couldn't lock $fname: $!";
@@ -178,14 +177,13 @@ sub istash {
 
 
 sub new {
-	my $class = shift->SUPER::new(@_);
-	$class->_init();
-	return $class;
+	return shift->SUPER::new(@_)->_init();
 }
 
 
 sub iemit {
-	my ($self, $event, @args) = @_;
+	my ($self, $event) = (shift, shift);
+	my @args = @_;
 	my @ports;
 
 	my $cant;
@@ -204,7 +202,7 @@ sub iemit {
 			print STDERR "Emitira localmente $event, (puerto $p)";
 			say STDERR $self->{events}{$event} ? ' (agendado)' : '';
 
-			# DANGER $self->{events} hash not docummented in Mojo::EE
+			# CAVEAT $self->{events} hash not docummented in Mojo::EE
 			$self->emit($event, @args) if $self->{events}{$event};
 
 			# --$cant or Mojo::IOLoop->stop;
@@ -248,6 +246,7 @@ sub iemit {
 						read => sub {
 							my ($stream, $bytes) = @_;
 							say STDERR "Port $p recibio: $bytes";
+							++$self->{__handshakes_ok} if $bytes;
 						}
 					);
 					$stream->write($idx);
@@ -276,9 +275,10 @@ sub _init {
 	my ($self) = @_;
 
 	# first thing to do, define broker msg server
-	my $id = Mojo::IOLoop->server(
+	$self->{_iid} = Mojo::IOLoop->server(
 		{address => '127.0.0.1'} => sub {
 			my ($loop, $stream, $id) = @_;
+			say STDERR '===> se estan conectando al puerto ', $self->server_port;
 			$stream->on(
 				read => sub {
 					my ($stream, $bytes) = @_;
@@ -296,14 +296,14 @@ sub _init {
 					print STDERR "Emitira $event recibido";
 					say STDERR $self->{events}{$event} ? ' (agendado)' : '';
 
-					# DANGER $self->{events} hash not docummented in Mojo::EE
+					# CAVEAT $self->{events} hash not docummented in Mojo::EE
 					$self->emit($event, @args) if $self->{events}{$event};
 				}
 			);
 		}
 	);
 
-	$self->server_port(Mojo::IOLoop->acceptor($id)->port);
+	$self->server_port(Mojo::IOLoop->acceptor($self->{_iid})->port);
 	$self->istash(
 		__ports => sub {
 			my %ports = map {$_ => undef} split /:/, (shift // '');
@@ -312,6 +312,7 @@ sub _init {
 		}
 	);
 	say STDERR "Server port: ${\$self->server_port}";
+	return $self;
 }
 
 1;
