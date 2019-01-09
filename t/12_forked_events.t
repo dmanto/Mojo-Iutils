@@ -1,11 +1,11 @@
 use strict;
 use warnings;
 
-
 BEGIN {
 	$ENV{MOJO_REACTOR} = 'Mojo::Reactor::Poll';
 }
 use utf8;
+use Test2::IPC;
 use Test2::V0;
 use Mojo::Iutils;
 use Mojo::File 'path';

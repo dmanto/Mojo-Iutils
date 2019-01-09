@@ -13,8 +13,6 @@ use constant {
 	DEBUG => $ENV{MOJO_IUTILS_DEBUG} || 0,
 	VARS_DIR => 'vars',
 	BUFFERS_DIR => 'buffers',
-	CATCH_VALID_TO => 5,
-	CATCH_SAFE_WINDOW => 5,
 	MAGIC_ID => 'IUTILS_MAGIC_str'
 };
 
@@ -27,7 +25,6 @@ has base_dir => sub {
 has buffer_size => sub {64};
 
 our $VERSION = '0.01';
-our $FTIME; # Fake time, for testing only
 has [qw(app_mode varsdir buffersdir vars_semaphore buffers_semaphore server_port)];
 has 'valid_fname' => sub {qr/^[\w\.-]+$/};
 has enc => sub {state $s = Sereal::Encoder->new};
@@ -94,26 +91,15 @@ sub ikeys {
 }
 
 
-sub gc {
-	my $self = shift;
-	$self->istash($_) for @{$self->ikeys};
-	my $ctime = sprintf '%10d', $FTIME // time; # current time, 10 digits number
-	for my $key (keys %{$self->catched_vars}) {
-		delete $self->catched_vars->{$key} unless $ctime <= $self->catched_vars->{$key}{tstamp} + CATCH_VALID_TO;
-	}
-	return $self;
-}
-
-
 sub istash {
-	my ($self, $key, $arg, %opts) = @_;
-	my ($cb, $val, $set_val, $last_def, $expires_by, $type);
-	my $ctime = sprintf '%10d', $FTIME // time; # current time, 10 digits number
-	$cb = $arg if ref $arg eq 'CODE';
-	my $has_to_write = @_ % 2; # odd nmbr of arguments --> write
-	$set_val = $arg unless $cb or !$has_to_write;
+	my ($self, $key, @set_list) = @_;
+	my @val_list;
+	my $cb = $set_list[0] if ref $set_list[0] eq 'CODE';
+	my $has_to_write = 1 if @set_list;
+	undef @set_list if $cb;
+	my $has_to_read = !@set_list;
 
-	unless (exists $self->catched_vars->{$key} && $ctime <= $self->catched_vars->{$key}{tstamp} + CATCH_VALID_TO) {
+	unless (exists $self->catched_vars->{$key}) {
 		my $file = $self->_get_vars_path($key);
 		open(my $sf, '>', $self->vars_semaphore) or die "Couldn't open $self->vars_semaphore for write: $!";
 		flock($sf, LOCK_EX) or die "Couldn't lock $self->vars_semaphore: $!";
@@ -122,39 +108,42 @@ sub istash {
 			close($tch) or die "Couldn't close $file: $!";
 		}
 		close($sf) or die "Couldn't close $self->vars_semaphore: $!";
-		$self->catched_vars->{$key}{path} = $file;
+		$self->catched_vars->{$key} = $file;
 	}
-
-
-	my $fname = $self->catched_vars->{$key}{path}; # path to file
+	my $fname = $self->catched_vars->{$key}; # path to file
 	my $lock_flags = $has_to_write ? LOCK_EX : LOCK_SH;
 	my $old_length;
 	open my $fh, '+<', $fname or die "Couldn't open $fname: $!";
 	binmode $fh;
 	flock($fh, $lock_flags) or die "Couldn't lock $fname: $!";
-	my $slurped_file = do {local $/; <$fh>};
-	$old_length = length $slurped_file;
-	($last_def, $expires_by, $type, $val) = unpack('a10a10a1a*', $slurped_file);
-
-	if ($last_def && $expires_by && $expires_by gt $ctime) {
-		$val = decode('UTF-8', $val) if $type && $type eq 1;
-	} else {
-		undef $val;
+	if ($has_to_read) {
+		my $slurped_file = do {local $/; <$fh>};
+		if ($old_length = length $slurped_file) {
+			my ($type, $val) = unpack('a1a*', $slurped_file);
+			if ($type eq '=') {
+				@val_list = ($val);
+			} elsif ($type eq 'U') {
+				@val_list = decode('UTF-8', $val);
+			} elsif ($type eq ':') {
+				@val_list = @{sereal_decode_with_object $self->dec, $val};
+			} else {
+				die "Unreconized file content: $type$val";
+			}
+		} # else keeps @val_list as an empty array
 	}
+	@set_list = $cb->(@val_list) if $cb;
 	if ($has_to_write) {
-		$val = $cb ? $cb->($val) : $set_val;
-
 		my $to_print;
-		my $expires_set = sprintf '%10d', $opts{expire} // 9999999999;
-		undef $val if $ctime >= $expires_set;
-		if (defined $val) {
-			$self->catched_vars->{$key}{tstamp} = $last_def = $ctime;
-			my $enc_val;
-			if (utf8::is_utf8($val)) {$type=1;$enc_val = encode 'UTF-8', $val}
-			else {$type = 0; $enc_val = $val}
-			$to_print = pack 'a10a10a1a*', $last_def, $expires_set, $type, $enc_val;
-		} else {
-			$to_print = $last_def // '';
+		if (@set_list == 1 && defined $set_list[0]) {
+			my $val = $set_list[0];
+			my ($type, $enc_val);
+			if (utf8::is_utf8($val)) {$type='U';$enc_val = encode 'UTF-8', $val}
+			else {$type = '='; $enc_val = $val}
+			$to_print = pack 'a1a*', $type, $enc_val;
+		} elsif (@set_list >= 1) {
+			$to_print = pack 'a1a*', ':', sereal_encode_with_object($self->enc, \@set_list );
+		} else { # set_list is an empty array
+			$to_print = '';
 		}
 
 		seek $fh, 0, 0;
@@ -164,15 +153,8 @@ sub istash {
 	}
 
 	close($fh) or die "Couldn't close $fname: $!";
-	$last_def ||= 0;
-	$self->catched_vars->{$key}{tstamp} = $last_def;
-	unless (defined $val || $ctime <= $last_def + CATCH_VALID_TO + CATCH_SAFE_WINDOW) {
-		open(my $sf, '>', $self->vars_semaphore) or die "Couldn't open $self->vars_semaphore for write: $!";
-		flock($sf, LOCK_EX) or die "Couldn't lock $self->vars_semaphore: $!";
-		unlink $fname if -f $fname;
-		close($sf) or die "Couldn't close $self->vars_semaphore: $!";
-	}
-	return $val;
+	my @ret_val = $has_to_write ? @set_list : @val_list;
+	return wantarray ? @ret_val : $ret_val[-1];
 }
 
 
