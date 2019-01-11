@@ -25,10 +25,8 @@ has base_dir => sub {
 has buffer_size => sub {64};
 
 our $VERSION = '0.01';
-has [qw(app_mode varsdir buffersdir vars_semaphore buffers_semaphore server_port)];
+has [qw(app_mode varsdir buffersdir vars_semaphore buffers_semaphore server_port sender_counter receiver_counter)];
 has 'valid_fname' => sub {qr/^[\w\.-]+$/};
-has enc => sub {state $s = Sereal::Encoder->new};
-has dec => sub {state $s = Sereal::Decoder->new};
 has catched_vars => sub {{}};
 
 
@@ -60,7 +58,7 @@ sub _write_event {
 	my ($self, $event, @args) = @_;
 	my $idx = $self->istash(__buffers_idx => sub {++$_[0]});
 	my $fname = _get_buffers_path($self, $idx);
-	my $bytes = sereal_encode_with_object $self->enc, {i => $idx, e => $event, a => \@args};
+	my $bytes = sereal_encode_with_object $self->{_enc}, {i => $idx, e => $event, a => \@args};
 	open my $wev, '>', $fname or die "Couldn't open event file: $!";
 	binmode $wev;
 	flock($wev, LOCK_EX) or die "Couldn't lock $fname: $!";
@@ -78,7 +76,7 @@ sub _read_event {
 	flock($rev, LOCK_SH) or die "Couldn't lock $fname: $!";
 	my $bytes = do {local $/; <$rev>};
 	close($rev) or die "Couldn't close $fname: $!";
-	my $res = sereal_decode_with_object $self->dec, $bytes;
+	my $res = sereal_decode_with_object $self->{_dec}, $bytes;
 	$self->emit(error => "Overflow trying to get event $idx") unless $res->{i} == $idx;
 	return $res;
 }
@@ -125,7 +123,7 @@ sub istash {
 			} elsif ($type eq 'U') {
 				@val_list = decode('UTF-8', $val);
 			} elsif ($type eq ':') {
-				@val_list = @{sereal_decode_with_object $self->dec, $val};
+				@val_list = @{sereal_decode_with_object $self->{_dec}, $val};
 			} else {
 				die "Unreconized file content: $type$val";
 			}
@@ -141,7 +139,7 @@ sub istash {
 			else {$type = '='; $enc_val = $val}
 			$to_print = pack 'a1a*', $type, $enc_val;
 		} elsif (@set_list >= 1) {
-			$to_print = pack 'a1a*', ':', sereal_encode_with_object($self->enc, \@set_list );
+			$to_print = pack 'a1a*', ':', sereal_encode_with_object($self->{_enc}, \@set_list );
 		} else { # set_list is an empty array
 			$to_print = '';
 		}
@@ -168,7 +166,6 @@ sub iemit {
 	my @args = @_;
 	my @ports;
 
-	my $cant;
 	my $idx;
 	if ($event =~ /^__(\d+)_\d+$/) { # unique send
 		@ports = ($1);
@@ -176,18 +173,12 @@ sub iemit {
 		@ports = split /:/, ($self->istash('__ports') // '');
 	}
 	for my $p (@ports) {
-
-		$cant++;
-
-		# say STDERR "Con port $p, cant: $cant";
 		if ($p == $self->server_port) { # no need to send
 			print STDERR "Emitira localmente $event, (puerto $p)";
 			say STDERR $self->{events}{$event} ? ' (agendado)' : '';
 
 			# CAVEAT $self->{events} hash not docummented in Mojo::EE
 			$self->emit($event, @args) if $self->{events}{$event};
-
-			# --$cant or Mojo::IOLoop->stop;
 			next;
 		}
 		$idx //= $self->_write_event($event => @args);
@@ -213,15 +204,11 @@ sub iemit {
 							);
 							say STDERR "error $err, deberia borrar ${\$id}";
 							$loop->remove($id);
-
-							# --$cant or $loop->stop;
 						}
 					);
 					$stream->on(
 						close => sub {
 							$loop->remove($id)
-
-							  #   ;--$cant or $loop->stop
 						}
 					);
 					$stream->on(
@@ -243,21 +230,23 @@ sub iemit {
 					);
 					say STDERR "Deberia borrar ${\$id}, no encontro $p";
 					$loop->remove($id);
-
-					# --$cant or $loop->stop;
 				}
 			}
 		);
 		say STDERR "Ya instalo $p, busca siguiente";
-	}
+	};
+	$self->{sender_counter}++;
 }
 
 
 sub _init {
 	my ($self) = @_;
+	$self->{_enc} = Sereal::Encoder->new;
+	$self->{_dec} = Sereal::Decoder->new;
+
 
 	# first thing to do, define broker msg server
-	$self->{_iid} = Mojo::IOLoop->server(
+	my $id = Mojo::IOLoop->server(
 		{address => '127.0.0.1'} => sub {
 			my ($loop, $stream, $id) = @_;
 			say STDERR '===> se estan conectando al puerto ', $self->server_port;
@@ -280,12 +269,13 @@ sub _init {
 
 					# CAVEAT $self->{events} hash not docummented in Mojo::EE
 					$self->emit($event, @args) if $self->{events}{$event};
+					$self->{receiver_counter}++;
 				}
 			);
 		}
 	);
 
-	$self->server_port(Mojo::IOLoop->acceptor($self->{_iid})->port);
+	$self->server_port(Mojo::IOLoop->acceptor($id)->port);
 	$self->istash(
 		__ports => sub {
 			my %ports = map {$_ => undef} split /:/, (shift // '');

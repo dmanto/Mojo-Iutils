@@ -19,15 +19,25 @@ $c->on(error => sub {push @errors, pop});
 is $c->_read_event($idx + $c->buffer_size), {i => $idx, e => 'my_event', a => [some => {data => 'is sent'}]}, 'read with overflow';
 is [@errors], ["Overflow trying to get event ". ($idx + $c->buffer_size)], "right overflow error";
 my @evs;
+$c->sender_counter(0)->receiver_counter(0);
 $c->on(
 	test1 => sub {
 		my $self = shift;
 		push @evs, [@_];
-		Mojo::IOLoop->next_tick(sub {shift->stop});
+
+		# Mojo::IOLoop->next_tick(sub {shift->stop});
 	}
 );
 $c->iemit(test1 => (alpha => '⍺'));
-Mojo::IOLoop->next_tick(sub {Mojo::IOLoop->stop});
+
+# Mojo::IOLoop->next_tick(sub {Mojo::IOLoop->stop});
+Mojo::IOLoop->recurring(
+	0 => sub {
+		my $loop = shift;
+		# say STDERR "Counters: ", $c->sender_counter, ' ', $c->receiver_counter;
+		$c->sender_counter == 1 && $c->receiver_counter == 0 && Mojo::IOLoop->stop;
+	}
+);
 Mojo::IOLoop->start;
 is \@evs, [[alpha => '⍺']], 'got event';
 done_testing;
