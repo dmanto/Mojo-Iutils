@@ -11,7 +11,7 @@ Mojo::Iutils::_get_buffers_path	lib/Mojo/Iutils.pm	45;"	s
 Mojo::Iutils::_get_vars_path	blib/lib/Mojo/Iutils.pm	33;"	s
 Mojo::Iutils::_get_vars_path	lib/Mojo/Iutils.pm	33;"	s
 Mojo::Iutils::_init	blib/lib/Mojo/Iutils.pm	254;"	s
-Mojo::Iutils::_init	lib/Mojo/Iutils.pm	242;"	s
+Mojo::Iutils::_init	lib/Mojo/Iutils.pm	247;"	s
 Mojo::Iutils::_read_event	blib/lib/Mojo/Iutils.pm	71;"	s
 Mojo::Iutils::_read_event	lib/Mojo/Iutils.pm	71;"	s
 Mojo::Iutils::_write_event	blib/lib/Mojo/Iutils.pm	57;"	s
@@ -29,7 +29,7 @@ _get_buffers_path	lib/Mojo/Iutils.pm	45;"	s
 _get_vars_path	blib/lib/Mojo/Iutils.pm	33;"	s
 _get_vars_path	lib/Mojo/Iutils.pm	33;"	s
 _init	blib/lib/Mojo/Iutils.pm	254;"	s
-_init	lib/Mojo/Iutils.pm	242;"	s
+_init	lib/Mojo/Iutils.pm	247;"	s
 _read_event	blib/lib/Mojo/Iutils.pm	71;"	s
 _read_event	lib/Mojo/Iutils.pm	71;"	s
 _write_event	blib/lib/Mojo/Iutils.pm	57;"	s

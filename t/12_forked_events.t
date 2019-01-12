@@ -6,16 +6,20 @@ BEGIN {
 	$ENV{MOJO_REACTOR} = 'Mojo::Reactor::Poll';
 }
 use utf8;
+
 use Test2::IPC;
 use Test2::V0;
 use Mojo::Iutils;
 use Mojo::File 'path';
+use Time::HiRes qw /sleep time/;
 
 $ENV{MOJO_MODE} = 'test';
 
 my $c = Mojo::Iutils->new;
+Mojo::IOLoop->timer(0.05 => sub {shift->stop});
+Mojo::IOLoop->start;
 $c->istash(sync => undef);
-my $cforks = 2;
+my $cforks = 4;
 $c->istash("sal$_" => undef) for 1..$cforks;
 
 for my $nfork (1..$cforks) {
@@ -25,38 +29,48 @@ for my $nfork (1..$cforks) {
 	# childs
 	# NO tests inside child code pls
 	my @evs;
+	open STDIN,  '<',  '/dev/null';
+	open STDOUT, '>',  '/dev/null';
+	open STDERR, '>&', STDOUT;
 	my $m = Mojo::Iutils->new;
+	Mojo::IOLoop->timer(1 => sub {shift->stop});
+	Mojo::IOLoop->start;
 	$m->sender_counter(0)->receiver_counter(0);
 	$m->on(
 		test1 => sub {
 			shift;
 			push @evs, @_;
-
-			# Mojo::IOLoop->next_tick(sub {shift->stop});
 		}
 	);
-	$m->istash(sync => sub {++$_[0]});
-	say STDERR "From child # $nfork, waiting sync 1";
-	while ($m->istash('sync') < $cforks) {}
+	my $nv = $m->istash(sync => sub {++$_[0]});
 
+	# say STDERR "From child # $nfork, waiting sync 1, nv is $nv";
+	while ($m->istash('sync') < $cforks) {
+		sleep .05; 	# be nice with other kids
+	}
+	say STDERR "From child # $nfork, sync 1 pased, my nv was $nv";
 	$m->iemit(test1 => "from child # $nfork");
 	Mojo::IOLoop->recurring(
-		0 => sub {
+		1 => sub {
 			my $loop = shift;
 			my $line = "$$:Counters: " . $m->sender_counter . ' ' . $m->receiver_counter . ' - ';
 			say STDERR $line;
-			$m->sender_counter == 1 && $m->receiver_counter == 1 && Mojo::IOLoop->stop;
+			Mojo::IOLoop->stop if $m->sender_counter == 1 && $m->receiver_counter == ($cforks-1);
 		}
 	);
 	Mojo::IOLoop->start;
 	$m->istash(sync => sub {++$_[0]});
-	say STDERR "From child # $nfork, waiting sync 2";
-	while ($m->istash('sync') < 2 * $cforks) {}
+	while ($m->istash('sync') < 2 * $cforks) {
+		sleep .05; 	# same as before
+	}
 	$m->istash("sal$nfork" => join(':', @evs));
+	sleep .05;
 	exit(0);
 }
 
 wait();
 is $c->istash('sync'), 2 * $cforks, 'sync';
-is $c->istash("sal1"), "from child # 1:from child # 2", 'child #1 events';
+my @end_result;
+push @end_result, sprintf "from child # $_"  for sort 1..$cforks; # alfanumeric sort (i.e. 10 < 2)
+is [sort split(':', $c->istash("sal1"))], \@end_result, 'child #1 events';
 done_testing;

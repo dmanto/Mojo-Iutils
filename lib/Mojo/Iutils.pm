@@ -22,7 +22,7 @@ has base_dir => sub {
 	return ($mode ? $p->child($mode) : $p)->to_string;
 };
 
-has buffer_size => sub {64};
+has buffer_size => sub {512};
 
 our $VERSION = '0.01';
 has [qw(app_mode varsdir buffersdir vars_semaphore buffers_semaphore server_port sender_counter receiver_counter)];
@@ -174,8 +174,8 @@ sub iemit {
 	}
 	for my $p (@ports) {
 		if ($p == $self->server_port) { # no need to send
-			print STDERR "Emitira localmente $event, (puerto $p)";
-			say STDERR $self->{events}{$event} ? ' (agendado)' : '';
+			 # print STDERR "Emitira localmente $event, (puerto $p)";
+			 # say STDERR $self->{events}{$event} ? ' (agendado)' : '';
 
 			# CAVEAT $self->{events} hash not docummented in Mojo::EE
 			$self->emit($event, @args) if $self->{events}{$event};
@@ -189,9 +189,9 @@ sub iemit {
 				port => $p
 			} => sub {
 				my ($loop, $err, $stream) = @_;
-				say STDERR "Conexion o error en $p";
 				if ($stream) {
-					say STDERR sprintf "Se conecto desde %d al %d", $self->server_port, $p;
+
+					# say STDERR sprintf "Se conecto desde %d al %d", $self->server_port, $p;
 					$stream->on(
 						error => sub {
 							my ($stream, $err) = @_;
@@ -202,24 +202,27 @@ sub iemit {
 									return join ':', keys %ports;
 								}
 							);
-							say STDERR "error $err, deberia borrar ${\$id}";
+
+							# say STDERR "error $err, deberia borrar ${\$id}";
 							$loop->remove($id);
 						}
 					);
 					$stream->on(
 						close => sub {
-							$loop->remove($id)
+							$loop->remove($id);
 						}
 					);
 					$stream->on(
 						read => sub {
 							my ($stream, $bytes) = @_;
 							say STDERR "Port $p recibio: $bytes";
-							++$self->{__handshakes_ok} if $bytes;
+
+							# ++$self->{__handshakes_ok} if $bytes;
 						}
 					);
-					$stream->write($idx);
-					say STDERR "Ya escribio en $p";
+					$stream->write($idx => sub {shift->close});
+
+					# say STDERR "Ya escribio en $p";
 				} else {
 					$self->istash(
 						__ports => sub {
@@ -228,13 +231,15 @@ sub iemit {
 							return join ':', keys %ports;
 						}
 					);
-					say STDERR "Deberia borrar ${\$id}, no encontro $p";
+
+					# say STDERR "Deberia borrar ${\$id}, no encontro $p";
 					$loop->remove($id);
 				}
 			}
 		);
-		say STDERR "Ya instalo $p, busca siguiente";
-	};
+
+		# say STDERR "Ya instalo $p, busca siguiente";
+	}
 	$self->{sender_counter}++;
 }
 
@@ -249,23 +254,26 @@ sub _init {
 	my $id = Mojo::IOLoop->server(
 		{address => '127.0.0.1'} => sub {
 			my ($loop, $stream, $id) = @_;
-			say STDERR '===> se estan conectando al puerto ', $self->server_port;
+
+			# say STDERR '===> se estan conectando al puerto ', $self->server_port;
 			$stream->on(
 				read => sub {
 					my ($stream, $bytes) = @_;
 
-					say "$$: en port ${\$self->server_port} recibio: $bytes";
-					$stream->write(
-						MAGIC_ID() => sub {
-							shift->close;
-						}
-					);
+					# say STDERR "$$: en port ${\$self->server_port} recibio: $bytes";
+
+					# $stream->write(
+					# 	MAGIC_ID() => sub {
+					# 		shift->close;
+					# 	}
+					# );
 					return unless $bytes && $bytes =~ /^(\d+)$/;
 					my $res = $self->_read_event($1);
 					my $event = $res->{e};
 					my @args = @{$res->{a}};
-					print STDERR "Emitira $event recibido";
-					say STDERR $self->{events}{$event} ? ' (agendado)' : '';
+
+					# print STDERR "Emitira $event recibido";
+					# say STDERR $self->{events}{$event} ? ' (agendado)' : '';
 
 					# CAVEAT $self->{events} hash not docummented in Mojo::EE
 					$self->emit($event, @args) if $self->{events}{$event};
@@ -283,7 +291,8 @@ sub _init {
 			return join ':', keys %ports;
 		}
 	);
-	say STDERR "Server port: ${\$self->server_port}";
+
+	# say STDERR "Server port: ${\$self->server_port}";
 	return $self;
 }
 
