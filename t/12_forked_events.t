@@ -29,11 +29,8 @@ for my $nfork (1..$cforks) {
 	# childs
 	# NO tests inside child code pls
 	my @evs;
-	open STDIN,  '<',  '/dev/null';
-	open STDOUT, '>',  '/dev/null';
-	open STDERR, '>&', STDOUT;
 	my $m = Mojo::Iutils->new;
-	Mojo::IOLoop->timer(1 => sub {shift->stop});
+	Mojo::IOLoop->timer(.05 => sub {shift->stop});
 	Mojo::IOLoop->start;
 	$m->sender_counter(0)->receiver_counter(0);
 	$m->on(
@@ -48,13 +45,13 @@ for my $nfork (1..$cforks) {
 	while ($m->istash('sync') < $cforks) {
 		sleep .05; 	# be nice with other kids
 	}
-	say STDERR "From child # $nfork, sync 1 pased, my nv was $nv";
+	# say STDERR "From child # $nfork, sync 1 pased, my nv was $nv";
 	$m->iemit(test1 => "from child # $nfork");
 	Mojo::IOLoop->recurring(
 		1 => sub {
 			my $loop = shift;
-			my $line = "$$:Counters: " . $m->sender_counter . ' ' . $m->receiver_counter . ' - ';
-			say STDERR $line;
+			# my $line = "$$:Counters: " . $m->sender_counter . ' ' . $m->receiver_counter . ' - ';
+			# say STDERR $line;
 			Mojo::IOLoop->stop if $m->sender_counter == 1 && $m->receiver_counter == ($cforks-1);
 		}
 	);

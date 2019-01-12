@@ -28,6 +28,8 @@ our $VERSION = '0.01';
 has [qw(app_mode varsdir buffersdir vars_semaphore buffers_semaphore server_port sender_counter receiver_counter)];
 has 'valid_fname' => sub {qr/^[\w\.-]+$/};
 has catched_vars => sub {{}};
+has enc => sub {shift->{_enc} //= Sereal::Encoder->new};
+has dec => sub {shift->{_dec} //= Sereal::Decoder->new};
 
 
 sub _get_vars_path {
@@ -58,7 +60,7 @@ sub _write_event {
 	my ($self, $event, @args) = @_;
 	my $idx = $self->istash(__buffers_idx => sub {++$_[0]});
 	my $fname = _get_buffers_path($self, $idx);
-	my $bytes = sereal_encode_with_object $self->{_enc}, {i => $idx, e => $event, a => \@args};
+	my $bytes = sereal_encode_with_object $self->enc, {i => $idx, e => $event, a => \@args};
 	open my $wev, '>', $fname or die "Couldn't open event file: $!";
 	binmode $wev;
 	flock($wev, LOCK_EX) or die "Couldn't lock $fname: $!";
@@ -76,7 +78,7 @@ sub _read_event {
 	flock($rev, LOCK_SH) or die "Couldn't lock $fname: $!";
 	my $bytes = do {local $/; <$rev>};
 	close($rev) or die "Couldn't close $fname: $!";
-	my $res = sereal_decode_with_object $self->{_dec}, $bytes;
+	my $res = sereal_decode_with_object $self->dec, $bytes;
 	$self->emit(error => "Overflow trying to get event $idx") unless $res->{i} == $idx;
 	return $res;
 }
@@ -123,7 +125,7 @@ sub istash {
 			} elsif ($type eq 'U') {
 				@val_list = decode('UTF-8', $val);
 			} elsif ($type eq ':') {
-				@val_list = @{sereal_decode_with_object $self->{_dec}, $val};
+				@val_list = @{sereal_decode_with_object $self->dec, $val};
 			} else {
 				die "Unreconized file content: $type$val";
 			}
@@ -139,7 +141,7 @@ sub istash {
 			else {$type = '='; $enc_val = $val}
 			$to_print = pack 'a1a*', $type, $enc_val;
 		} elsif (@set_list >= 1) {
-			$to_print = pack 'a1a*', ':', sereal_encode_with_object($self->{_enc}, \@set_list );
+			$to_print = pack 'a1a*', ':', sereal_encode_with_object($self->enc, \@set_list );
 		} else { # set_list is an empty array
 			$to_print = '';
 		}
@@ -195,13 +197,7 @@ sub iemit {
 					$stream->on(
 						error => sub {
 							my ($stream, $err) = @_;
-							$self->istash(
-								__ports => sub {
-									my %ports = map {$_ => undef} split /:/, (shift // '');
-									delete $ports{$p};
-									return join ':', keys %ports;
-								}
-							);
+							$self->_delete_port($p);
 
 							# say STDERR "error $err, deberia borrar ${\$id}";
 							$loop->remove($id);
@@ -216,21 +212,13 @@ sub iemit {
 						read => sub {
 							my ($stream, $bytes) = @_;
 							say STDERR "Port $p recibio: $bytes";
-
-							# ++$self->{__handshakes_ok} if $bytes;
 						}
 					);
 					$stream->write($idx => sub {shift->close});
 
 					# say STDERR "Ya escribio en $p";
 				} else {
-					$self->istash(
-						__ports => sub {
-							my %ports = map {$_ => undef} split /:/, (shift // '');
-							delete $ports{$p};
-							return join ':', keys %ports;
-						}
-					);
+					$self->_delete_port($p);
 
 					# say STDERR "Deberia borrar ${\$id}, no encontro $p";
 					$loop->remove($id);
@@ -246,9 +234,6 @@ sub iemit {
 
 sub _init {
 	my ($self) = @_;
-	$self->{_enc} = Sereal::Encoder->new;
-	$self->{_dec} = Sereal::Decoder->new;
-
 
 	# first thing to do, define broker msg server
 	my $id = Mojo::IOLoop->server(
@@ -296,6 +281,23 @@ sub _init {
 	return $self;
 }
 
+
+sub _delete_port {
+	my ($self, $p) = @_;
+	$self->istash(
+		__ports => sub {
+			my %ports = map {$_ => undef} split /:/, (shift // '');
+			delete $ports{$p};
+			return join ':', keys %ports;
+		}
+	);
+}
+
+
+sub DESTROY {
+	my $self = shift;
+	$self->_delete_port($self->server_port);
+}
 1;
 __END__
 
