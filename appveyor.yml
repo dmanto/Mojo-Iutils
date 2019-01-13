@@ -1,15 +1,14 @@
 environment:
   matrix:
-    - MYSYSTEM: strawberry
-      CACHE: C:\strawberry
-      SBRY_FLAG: 1
-
     - MYSISTEM: cygwin
       BASH: C:\cygwin64\bin\bash
       CACHE: C:\cygwin64\var\cache\setup
       CYG_FLAG: 1
       PERL_MM_USE_DEFAULT: 1
       PERL_EXTUTILS_AUTOINSTALL: "--defaultdeps"
+    - MYSYSTEM: strawberry
+      CACHE: C:\strawberry
+      SBRY_FLAG: 1
 
 cache:
   - '%CACHE%'
