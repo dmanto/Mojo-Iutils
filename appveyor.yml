@@ -13,7 +13,7 @@ cache:
 
 install:
   - if defined STRBRRY (if not exist "C:\strawberry" choco install strawberryperl -y)
-  - if defined STRBRRY (set PATH=C:\strawberry\c\bin;C:\strawberry\perl\site\bin;C:\strawberry\perl\bin;%PATH%)
+  - set PATH=C:\strawberry\c\bin;C:\strawberry\perl\site\bin;C:\strawberry\perl\bin;%PATH%
   - if defined STRBRRY (cd %APPVEYOR_BUILD_FOLDER% && cpanm --quiet --installdeps --with-develop --notest .)
 
 build_script:
