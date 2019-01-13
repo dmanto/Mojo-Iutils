@@ -1,25 +1,25 @@
 environment:
-
-  - MYSYSTEM: strawberry
-    CACHE: C:\strawberry
-    INSTALL:
-      - 'if not exist "C:\strawberry" choco install strawberryperl -y'
-      - 'set PATH=C:\strawberry\c\bin;C:\strawberry\perl\site\bin;C:\strawberry\perl\bin;%PATH%'
-      - cd %APPVEYOR_BUILD_FOLDER% && cpanm --quiet --installdeps --with-develop --notest .
-    BUILD_SCRIPT:
-      - perl Build.PL
-      - Build
-    TEST_SCRIPT:
-      - Build test
-  
-  - MYSISTEM: cygwin
-    BASH: C:\cygwin64\bin\bash
-    CACHE: C:\cygwin64\var\cache\setup
-    INSTALL: '%BASH% -lc "cd $APPVEYOR_BUILD_FOLDER && cpanm --quiet --installdeps --with-develop --notest ."'
-    BUILD_SCRIPT:
-      - '%BASH% -lc "cd $APPVEYOR_BUILD_FOLDER && perl Build.PL && ./Build"'
-    TEST_SCRIPT:
-      - '%BASH% -lc "cd $APPVEYOR_BUILD_FOLDER && ./Build test"'
+  matrix:
+    - MYSYSTEM: strawberry
+      CACHE: C:\strawberry
+      INSTALL:
+        - 'if not exist "C:\strawberry" choco install strawberryperl -y'
+        - 'set PATH=C:\strawberry\c\bin;C:\strawberry\perl\site\bin;C:\strawberry\perl\bin;%PATH%'
+        - cd %APPVEYOR_BUILD_FOLDER% && cpanm --quiet --installdeps --with-develop --notest .
+      BUILD_SCRIPT:
+        - perl Build.PL
+        - Build
+      TEST_SCRIPT:
+        - Build test
+    
+    - MYSISTEM: cygwin
+      BASH: C:\cygwin64\bin\bash
+      CACHE: C:\cygwin64\var\cache\setup
+      INSTALL: '%BASH% -lc "cd $APPVEYOR_BUILD_FOLDER && cpanm --quiet --installdeps --with-develop --notest ."'
+      BUILD_SCRIPT:
+        - '%BASH% -lc "cd $APPVEYOR_BUILD_FOLDER && perl Build.PL && ./Build"'
+      TEST_SCRIPT:
+        - '%BASH% -lc "cd $APPVEYOR_BUILD_FOLDER && ./Build test"'
 
 cache:
   - '%CACHE%'
