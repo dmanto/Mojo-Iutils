@@ -2,23 +2,25 @@ environment:
   matrix:
     - MYSYSTEM: strawberry
       CACHE: C:\strawberry
-      STRBRRY: 1
+      SBRY_FLAG: 1
 
-    # - MYSISTEM: cygwin
-    #   BASH: C:\cygwin64\bin\bash
-    #   CACHE: C:\cygwin64\var\cache\setup
+    - MYSISTEM: cygwin
+      BASH: C:\cygwin64\bin\bash
+      CACHE: C:\cygwin64\var\cache\setup
+      CYG_FLAG: 1
 
 cache:
   - '%CACHE%'
 
 install:
-  - if defined STRBRRY (if not exist "C:\strawberry" choco install strawberryperl -y)
+  - if defined SBRY_FLAG (if not exist "C:\strawberry" choco install strawberryperl -y)
   - set PATH=C:\strawberry\c\bin;C:\strawberry\perl\site\bin;C:\strawberry\perl\bin;%PATH%
-  - if defined STRBRRY (cd %APPVEYOR_BUILD_FOLDER% && cpanm --quiet --installdeps --with-develop --notest .)
-
+  - if defined SBRY_FLAG (cd %APPVEYOR_BUILD_FOLDER% && cpanm --quiet --installdeps --with-develop --notest .)
+  - if defined CYG_FLAG (%BASH% -lc "cd $APPVEYOR_BUILD_FOLDER && cpanm --quiet --installdeps --with-develop --notest .")
 build_script:
-  - perl Build.PL
-  - Build
+  - if defined SBRY_FLAG (perl Build.PL && Build)
+  - if defined CYG_FLAG (%BASH% -lc "cd $APPVEYOR_BUILD_FOLDER && perl Build.PL && ./Build")
 
 test_script:
-  - Build test
+  - if defined SBRY_FLAG (Build test)
+  - if defined CYG_FLAG (%BASH% -lc "cd $APPVEYOR_BUILD_FOLDER && ./Build test")
