@@ -18,7 +18,6 @@ install:
   - if defined SBRY_FLAG (if not exist "C:\strawberry" choco install strawberryperl -y)
   - set PATH=C:\strawberry\c\bin;C:\strawberry\perl\site\bin;C:\strawberry\perl\bin;%PATH%
   - if defined SBRY_FLAG (cd %APPVEYOR_BUILD_FOLDER% && cpanm --quiet --installdeps --with-develop --notest .)
-  - if defined CYG_FLAG ('%CYG_INST% --quiet-mode --no-shortcuts --upgrade-also --packages perl,cpanm')
   - if defined CYG_FLAG (%BASH% -lc "cd $APPVEYOR_BUILD_FOLDER && perl -MCPAN -e 'install App::cpanminus' && cpanm --quiet --installdeps --with-develop --notest .")
 build_script:
   - if defined SBRY_FLAG (perl Build.PL && Build)
