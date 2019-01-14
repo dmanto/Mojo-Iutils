@@ -18,7 +18,7 @@ install:
   - set PATH=C:\strawberry\c\bin;C:\strawberry\perl\site\bin;C:\strawberry\perl\bin;%PATH%
   - if defined SBRY_FLAG (cd %APPVEYOR_BUILD_FOLDER% && cpanm --quiet --installdeps --with-develop --notest .)
   - if defined CYG_FLAG (choco install cygwin cyg-get)
-  - if defined CYG_FLAG (cyg-get perl make)
+  - if defined CYG_FLAG (cyg-get perl make libcrypt-devel)
   - if defined CYG_FLAG (%BASH% -lc "cd $APPVEYOR_BUILD_FOLDER && perl -MCPAN -e 'install App::cpanminus' && /home/appveyor/perl5/bin/cpanm -v --installdeps --notest .")
 build_script:
   - if defined SBRY_FLAG (perl Build.PL && Build)
