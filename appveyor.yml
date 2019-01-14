@@ -17,8 +17,8 @@ install:
   - if defined SBRY_FLAG (if not exist "C:\strawberry" choco install strawberryperl -y)
   - set PATH=C:\strawberry\c\bin;C:\strawberry\perl\site\bin;C:\strawberry\perl\bin;%PATH%
   - if defined SBRY_FLAG (cd %APPVEYOR_BUILD_FOLDER% && cpanm --quiet --installdeps --with-develop --notest .)
-  - if defined CYG_FLAG (choco install cygwin cyg-get)
-  - if defined CYG_FLAG (cyg-get perl make perl-Net-DNS-SEC)
+  - if defined CYG_FLAG (choco install cygwin cyg-get && refreshenv)
+  - if defined CYG_FLAG (cyg-get perl make openssl-devel && refreshenv)
   - if defined CYG_FLAG (%BASH% -lc "cd $APPVEYOR_BUILD_FOLDER && perl -MCPAN -e 'install App::cpanminus' && /home/appveyor/perl5/bin/cpanm --installdeps --notest .")
 build_script:
   - if defined SBRY_FLAG (perl Build.PL && Build)
@@ -27,3 +27,6 @@ build_script:
 test_script:
   - if defined SBRY_FLAG (Build test)
   - if defined CYG_FLAG (%BASH% -lc "cd $APPVEYOR_BUILD_FOLDER && ./Build test")
+
+matrix:
+  fast_finish: true
