@@ -60,7 +60,7 @@ sub _write_event {
 	my ($self, $event, @args) = @_;
 	my $idx = $self->istash(__buffers_idx => sub {++$_[0]});
 	my $fname = _get_buffers_path($self, $idx);
-	my $bytes = sereal_encode_with_object $self->enc, {i => $idx, e => $event, a => \@args};
+	my $bytes = &sereal_encode_with_object($self->enc, {i => $idx, e => $event, a => \@args});
 	open my $wev, '>', $fname or die "Couldn't open event file: $!";
 	binmode $wev;
 	flock($wev, LOCK_EX) or die "Couldn't lock $fname: $!";
@@ -78,7 +78,7 @@ sub _read_event {
 	flock($rev, LOCK_SH) or die "Couldn't lock $fname: $!";
 	my $bytes = do {local $/; <$rev>};
 	close($rev) or die "Couldn't close $fname: $!";
-	my $res = sereal_decode_with_object $self->dec, $bytes;
+	my $res = &sereal_decode_with_object($self->dec, $bytes);
 	$self->emit(error => "Overflow trying to get event $idx") unless $res->{i} == $idx;
 	return $res;
 }
@@ -93,11 +93,11 @@ sub ikeys {
 
 sub istash {
 	my ($self, $key, @set_list) = @_;
-	my @val_list;
-	my $cb = $set_list[0] if ref $set_list[0] eq 'CODE';
-	my $has_to_write = 1 if @set_list;
+	my (@val_list, $cb, $has_to_read, $has_to_write);
+	$cb = $set_list[0] if ref $set_list[0] eq 'CODE';
+	$has_to_write = 1 if @set_list;
 	undef @set_list if $cb;
-	my $has_to_read = !@set_list;
+	$has_to_read = !@set_list;
 
 	unless (exists $self->catched_vars->{$key}) {
 		my $file = $self->_get_vars_path($key);
@@ -125,7 +125,7 @@ sub istash {
 			} elsif ($type eq 'U') {
 				@val_list = decode('UTF-8', $val);
 			} elsif ($type eq ':') {
-				@val_list = @{sereal_decode_with_object $self->dec, $val};
+				@val_list = @{&sereal_decode_with_object($self->dec, $val)};
 			} else {
 				die "Unreconized file content: $type$val";
 			}
@@ -141,7 +141,7 @@ sub istash {
 			else {$type = '='; $enc_val = $val}
 			$to_print = pack 'a1a*', $type, $enc_val;
 		} elsif (@set_list >= 1) {
-			$to_print = pack 'a1a*', ':', sereal_encode_with_object($self->enc, \@set_list );
+			$to_print = pack 'a1a*', ':', &sereal_encode_with_object($self->enc, \@set_list );
 		} else { # set_list is an empty array
 			$to_print = '';
 		}
@@ -305,15 +305,71 @@ __END__
 
 =head1 NAME
 
-Mojo::Iutils - It's new $module
+Mojo::Iutils - Inter Process Communications Utilities without dependences
 
 =head1 SYNOPSIS
 
-    use Mojo::Iutils;
+	# hit counter, works with daemon, prefork & hypnotoad servers
+
+	use Mojolicious::Lite;
+	use Mojo::Iutils;
+
+	helper iutils => sub {state $iutils = Mojo::Iutils->new};
+
+	get '/' => sub {
+		my $c = shift;
+		my $cnt = $c->iutils->istash(mycounter => sub {++$_[0]});
+		$c->render(text => "Hello, this page was hit $cnt times (and I'm process $$ talking)");
+	};
+
+	app->start
+
+	# emit interprocess events, works with daemon, prefork & hypnotoad
+	# (modified from chat.pl Mojolicious example)
+
+	use Mojolicious::Lite;
+	use Mojo::Iutils;
+	
+	helper events => sub { state $events = Mojo::Iutils->new };
+	
+	get '/' => 'chat';
+	
+	websocket '/channel' => sub {
+	my $c = shift;
+
+	$c->inactivity_timeout(3600);
+	
+	# Forward messages from the browser
+	$c->on(message => sub { shift->events->iemit(mojochat => shift) });
+	
+	# Forward messages to the browser
+	my $cb = $c->events->on(mojochat => sub { $c->send(pop) });
+	$c->on(finish => sub { shift->events->unsubscribe(mojochat => $cb) });
+	};
+	
+	# Minimal multiple-process WebSocket chat application for browser testing
+
+	app->start;
+	__DATA__
+	
+	@@ chat.html.ep
+	<form onsubmit="sendChat(this.children[0]); return false"><input></form>
+	<div id="log"></div>
+	<script>
+	var ws  = new WebSocket('<%= url_for('channel')->to_abs %>');
+	ws.onmessage = function (e) {
+		document.getElementById('log').innerHTML += '<p>' + e.data + '</p>';
+	};
+	function sendChat(input) { ws.send(input.value); input.value = '' }
+	</script>
 
 =head1 DESCRIPTION
 
-Mojo::Iutils is ...
+Mojo::Iutils provides Persistence and Inter Process Events, without any external dependences beyond
+L<Mojolicious> and L<Sereal> Perl Modules.
+
+Its main intent is for use in microservices (because does not require external services, 
+like a database or a pubsub external service)
 
 =head1 LICENSE
 
@@ -324,7 +380,7 @@ it under the same terms as Perl itself.
 
 =head1 AUTHOR
 
-Daniel Mantovani E<lt>daniel@gmail.comE<gt>
+Daniel Mantovani E<lt>dmanto@cpan.orgE<gt>
 
 =cut
 

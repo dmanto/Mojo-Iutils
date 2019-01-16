@@ -1,18 +1,13 @@
 use Mojolicious::Lite;
-use lib './lib';
 use Mojo::Iutils;
  
 helper events => sub { state $events = Mojo::Iutils->new };
  
-get '/' => sub {
-    my $c = shift;
-    sleep 10;
-    return $c->render('chat');
-};
+get '/' => 'chat';
  
 websocket '/channel' => sub {
   my $c = shift;
-  say STDERR "Pidieron un websocket en $$";
+
   $c->inactivity_timeout(3600);
  
   # Forward messages from the browser
@@ -24,15 +19,11 @@ websocket '/channel' => sub {
 };
  
 # Minimal multiple-process WebSocket chat application for browser testing
-app->hook(before_server_start => sub {
-  my ($server, $app) = @_;
-  $server->max_clients(1);
-});
+
 app->start;
 __DATA__
  
 @@ chat.html.ep
-<p> From process <%= $$ %> local port <%= events->server_port %></p>
 <form onsubmit="sendChat(this.children[0]); return false"><input></form>
 <div id="log"></div>
 <script>
