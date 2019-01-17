@@ -13,7 +13,6 @@ use constant {
 	DEBUG => $ENV{MOJO_IUTILS_DEBUG} || 0,
 	VARS_DIR => 'vars',
 	BUFFERS_DIR => 'buffers',
-	MAGIC_ID => 'IUTILS_MAGIC_str'
 };
 
 has base_dir => sub {
@@ -25,7 +24,7 @@ has base_dir => sub {
 has buffer_size => sub {512};
 
 our $VERSION = '0.01';
-has [qw(app_mode varsdir buffersdir vars_semaphore buffers_semaphore server_port sender_counter receiver_counter)];
+has [qw(app_mode vars_semaphore buffers_semaphore server_port sender_counter receiver_counter)];
 has 'valid_fname' => sub {qr/^[\w\.-]+$/};
 has catched_vars => sub {{}};
 has enc => sub {shift->{_enc} //= Sereal::Encoder->new};
@@ -35,24 +34,24 @@ has dec => sub {shift->{_dec} //= Sereal::Decoder->new};
 sub _get_vars_path {
 	my ($self, $key) = @_;
 	die "Key $key not valid" unless $key =~ $self->valid_fname;
-	unless ($self->varsdir) { # inicializes $self->varsdir & $self->vars_semaphore
-		$self->varsdir(path($self->base_dir, VARS_DIR ));
-		$self->varsdir->make_path unless -d $self->varsdir;
-		$self->vars_semaphore($self->varsdir->sibling('vars.lock')->to_string);
+	unless ($self->{varsdir}) { # inicializes $self->{varsdir} & $self->vars_semaphore
+		$self->{varsdir} = path($self->base_dir, VARS_DIR );
+		$self->{varsdir}->make_path unless -d $self->{varsdir};
+		$self->vars_semaphore($self->{varsdir}->sibling('vars.lock')->to_string);
 	}
-	return $self->varsdir->child($key)->to_string;
+	return $self->{varsdir}->child($key)->to_string;
 }
 
 
 sub _get_buffers_path {
 	my ($self, $n) = @_;
 	die "Emit ID $n not valid" unless $n =~ /^\d+$/; # only integers are valid
-	unless ($self->buffersdir) { # inicializes $self->buffersdir & $self->buffers_semaphore
-		$self->buffersdir(path($self->base_dir, BUFFERS_DIR ));
-		$self->buffersdir->make_path unless -d $self->buffersdir;
-		$self->buffers_semaphore($self->buffersdir->sibling('buffers.lock')->to_string);
+	unless ($self->{buffersdir}) { # inicializes $self->{buffersdir} & $self->buffers_semaphore
+		$self->{buffersdir} = path($self->base_dir, BUFFERS_DIR );
+		$self->{buffersdir}->make_path unless -d $self->{buffersdir};
+		$self->buffers_semaphore($self->{buffersdir}->sibling('buffers.lock')->to_string);
 	}
-	return $self->buffersdir->child(sprintf 'E%07d', $n % $self->buffer_size)->to_string;
+	return $self->{buffersdir}->child(sprintf 'E%07d', $n % $self->buffer_size)->to_string;
 }
 
 
@@ -86,8 +85,8 @@ sub _read_event {
 
 sub ikeys {
 	my $self = shift;
-	$self->_get_vars_path('dummy') unless $self->varsdir; # initializes $self->varsdir
-	return $self->varsdir->list->map('basename')->to_array;
+	$self->_get_vars_path('dummy') unless $self->{varsdir}; # initializes $self->{varsdir}
+	return $self->{varsdir}->list->map('basename')->to_array;
 }
 
 
@@ -176,10 +175,7 @@ sub iemit {
 	}
 	for my $p (@ports) {
 		if ($p == $self->server_port) { # no need to send
-			 # print STDERR "Emitira localmente $event, (puerto $p)";
-			 # say STDERR $self->{events}{$event} ? ' (agendado)' : '';
-
-			# CAVEAT $self->{events} hash not docummented in Mojo::EE
+			 # CAVEAT $self->{events} hash not docummented in Mojo::EE
 			$self->emit($event, @args) if $self->{events}{$event};
 			next;
 		}
@@ -192,14 +188,10 @@ sub iemit {
 			} => sub {
 				my ($loop, $err, $stream) = @_;
 				if ($stream) {
-
-					# say STDERR sprintf "Se conecto desde %d al %d", $self->server_port, $p;
 					$stream->on(
 						error => sub {
 							my ($stream, $err) = @_;
 							$self->_delete_port($p);
-
-							# say STDERR "error $err, deberia borrar ${\$id}";
 							$loop->remove($id);
 						}
 					);
@@ -215,18 +207,12 @@ sub iemit {
 						}
 					);
 					$stream->write($idx => sub {shift->close});
-
-					# say STDERR "Ya escribio en $p";
 				} else {
 					$self->_delete_port($p);
-
-					# say STDERR "Deberia borrar ${\$id}, no encontro $p";
 					$loop->remove($id);
 				}
 			}
 		);
-
-		# say STDERR "Ya instalo $p, busca siguiente";
 	}
 	$self->{sender_counter}++;
 }
@@ -239,26 +225,13 @@ sub _init {
 	my $id = Mojo::IOLoop->server(
 		{address => '127.0.0.1'} => sub {
 			my ($loop, $stream, $id) = @_;
-
-			# say STDERR '===> se estan conectando al puerto ', $self->server_port;
 			$stream->on(
 				read => sub {
 					my ($stream, $bytes) = @_;
-
-					# say STDERR "$$: en port ${\$self->server_port} recibio: $bytes";
-
-					# $stream->write(
-					# 	MAGIC_ID() => sub {
-					# 		shift->close;
-					# 	}
-					# );
 					return unless $bytes && $bytes =~ /^(\d+)$/;
 					my $res = $self->_read_event($1);
 					my $event = $res->{e};
 					my @args = @{$res->{a}};
-
-					# print STDERR "Emitira $event recibido";
-					# say STDERR $self->{events}{$event} ? ' (agendado)' : '';
 
 					# CAVEAT $self->{events} hash not docummented in Mojo::EE
 					$self->emit($event, @args) if $self->{events}{$event};
@@ -276,8 +249,6 @@ sub _init {
 			return join ':', keys %ports;
 		}
 	);
-
-	# say STDERR "Server port: ${\$self->server_port}";
 	return $self;
 }
 
@@ -318,13 +289,16 @@ Mojo::Iutils - Inter Process Communications Utilities without dependences
 
 	get '/' => sub {
 		my $c = shift;
+
+		# Increment persistent counter "mycounter" with a simple callback.
+		# Locking / Unlocking is handled under the hood
 		my $cnt = $c->iutils->istash(mycounter => sub {++$_[0]});
 		$c->render(text => "Hello, this page was hit $cnt times (and I'm process $$ talking)");
 	};
 
 	app->start
 
-	# emit interprocess events, works with daemon, prefork & hypnotoad
+	# emit interprocess events (ievent method), works with daemon, prefork & hypnotoad
 	# (modified from chat.pl Mojolicious example)
 
 	use Mojolicious::Lite;
@@ -368,8 +342,19 @@ Mojo::Iutils - Inter Process Communications Utilities without dependences
 Mojo::Iutils provides Persistence and Inter Process Events, without any external dependences beyond
 L<Mojolicious> and L<Sereal> Perl Modules.
 
-Its main intent is for use in microservices (because does not require external services, 
-like a database or a pubsub external service)
+Its main intents are 1) to be used for microservices (because does not require external services, 
+like a database or a pubsub external service, so lowers other dependences), and 2) being very portable, running at least in
+main (*)nix distributions, OSX, and Windows (Strawberry perl for cmd users, default perl installation for Cygwin and WSL users)
+
+=head1 EVENTS
+
+L<Mojo::Iutils> inherits all events from L<Mojo::EventEmitter>.
+
+
+=head1 ATTRIBUTES
+
+L<Mojo::Iutils> implements the following attributes:
+
 
 =head1 LICENSE
 
