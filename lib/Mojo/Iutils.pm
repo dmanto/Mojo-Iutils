@@ -59,6 +59,7 @@ sub _write_event {
   my ($self, $event, @args) = @_;
   my $idx = $self->istash(__buffers_idx => sub { ++$_[0] });
   my $fname = _get_buffers_path($self, $idx);
+  $self->{enc} //= Sereal::Encoder->new;
   my $bytes = &sereal_encode_with_object($self->{enc},
     {i => $idx, e => $event, a => \@args});
   open my $wev, '>', $fname or die "Couldn't open event file: $!";
@@ -78,6 +79,7 @@ sub _read_event {
   flock($rev, LOCK_SH) or die "Couldn't lock $fname: $!";
   my $bytes = do { local $/; <$rev> };
   close($rev) or die "Couldn't close $fname: $!";
+  $self->{dec} //= Sereal::Decoder->new;
   my $res = &sereal_decode_with_object($self->{dec}, $bytes);
   $self->emit(error => "Overflow trying to get event $idx")
     unless $res->{i} == $idx;
@@ -130,6 +132,7 @@ sub istash {
         @val_list = decode('UTF-8', $val);
       }
       elsif ($type eq ':') {
+        $self->{dec} //= Sereal::Decoder->new;
         @val_list = @{&sereal_decode_with_object($self->{dec}, $val)};
       }
       else {
@@ -148,6 +151,7 @@ sub istash {
       $to_print = pack 'a1a*', $type, $enc_val;
     }
     elsif (@set_list >= 1) {
+      $self->{enc} //= Sereal::Encoder->new;
       $to_print = pack 'a1a*', ':',
         &sereal_encode_with_object($self->{enc}, \@set_list);
     }
@@ -230,8 +234,6 @@ sub iemit {
 
 sub _init {
   my ($self) = @_;
-  $self->{enc} = Sereal::Encoder->new;
-  $self->{dec} = Sereal::Decoder->new;
 
   # define broker msg server
   my $id = Mojo::IOLoop->server(
