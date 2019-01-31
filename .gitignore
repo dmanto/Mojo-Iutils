@@ -22,3 +22,4 @@ MYMETA.*
 cover_db/
 nytprof.out
 nytprof/
+.vscode/
