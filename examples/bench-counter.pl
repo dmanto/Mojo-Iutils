@@ -1,4 +1,11 @@
 # hit counter, works with daemon, prefork & hypnotoad servers
+# run with hypnotoad, then you can compare:
+#
+# wrk -c 100 -d 10s http://127.0.0.1:8080/sqlite
+# wrk -c 100 -d 10s http://127.0.0.1:8080/pg
+# wrk -c 100 -d 10s http://127.0.0.1:8080/istash
+# wrk -c 100 -d 10s http://127.0.0.1:8080/redis
+#
 
 use Mojolicious::Lite;
 use Mojo::Iutils;
@@ -27,7 +34,7 @@ drop table glb;
 ")->migrate;
 
 get '/sqlite' => sub {
-  my $c = shift;
+  my $c  = shift;
   my $db = $c->sqlite->db;
   $db->query("update glb set v=v+1 where k='my_counter'");
   my $cnt = $db->query("select v from glb where k='my_counter'")->array->[0];

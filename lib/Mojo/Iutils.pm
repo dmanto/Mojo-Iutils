@@ -176,6 +176,10 @@ sub new {
   return shift->SUPER::new(@_)->_init();
 }
 
+sub unique {
+  my $self = shift;
+  return '__'.$self->{server_port}.'_'. ++$self->{unique_count};
+}
 
 sub iemit {
   my ($self, $event) = (shift, shift);
@@ -369,6 +373,38 @@ L<Mojo::Iutils> inherits all events from L<Mojo::EventEmitter>.
 
 L<Mojo::Iutils> implements the following attributes:
 
+=head2 app_mode
+
+  my $iutils = Mojo::Iutils->new(app_mode => 'test');
+
+Used to force application mode. This value will be taken to generate the default base_dir attribute;
+
+=head2 base_dir
+
+  my $base_dir = $iutils->base_dir;
+  $iutils = $iutils->base_dir($app->home('iutilsdir', $app->mode));
+
+Base directory to be used by L<Mojo::Iutils>. Must be the same for different applications if they
+need to communicate among them.
+
+It should include the mode of the application, otherwise testing will probably interfere with production
+files so you will not be able to test an application safelly on a production server.
+
+Defaults for a temporary directory. It also includes the running user name, so to avoid permission problems
+on automatic (matrix CI) installations with different users.
+
+=head2 buffer_size
+
+  my $buffer_size = $iutils->buffer_size;
+  my $iutils = Mojo::Iutils->new(buffer_size => 512);
+  $iutils = $iutils->buffer_size(1024);
+
+The size of the circular buffer used to store events. Should be big enough to
+handle slow attended events, or it will die with an overflow error.
+
+=head1 METHODS
+
+L<Mojo::Iutils> inherits all events from L<Mojo::EventEmitter>, and implements the following new ones:
 
 =head1 LICENSE
 
