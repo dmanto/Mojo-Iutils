@@ -96,8 +96,8 @@ need to communicate among them.
 It should include the mode of the application, otherwise testing will probably interfere with production
 files so you will not be able to test an application safelly on a production server.
 
-Defaults for a temporary directory. It also includes the running user name, so to avoid permission problems
-on automatic (matrix CI) installations with different users.
+Defaults for a temporary directory. It also includes the running user name, to avoid permission problems
+on automatic (matrix) tester installations with different users (i.e. with and without sudo cpanm installs).
 
 ## buffer\_size
 
@@ -141,7 +141,7 @@ Set data (returning same data):
 Modify data with code
 
     $iutils->istash(foo => undef); # clears var foo
-    $iutils->istash)foo => sub {my @z = @_; push @z, $x; @z}; # pushes $x to array in foo
+    $iutils->istash(foo => sub {my @z = @_; push @z, $x; @z}); # pushes $x to array in foo
 
 The three operations are thread & fork safe. Get data gets a shared lock, while
 set and modify get an exclusive lock.
