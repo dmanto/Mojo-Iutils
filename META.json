@@ -65,10 +65,11 @@
          "web" : "https://github.com/dmanto/Mojo-Iutils"
       }
    },
-   "version" : "0.01",
+   "version" : "0.02",
    "x_authority" : "cpan:DMANTO",
    "x_contributors" : [
-      "Daniel Mantovani <daniel@gmail.com>"
+      "Daniel Mantovani <daniel@gmail.com>",
+      "Daniel Mantovani <dmanto@gmail.com>"
    ],
    "x_serialization_backend" : "JSON::PP version 2.97001",
    "x_static_install" : 1

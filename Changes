@@ -2,6 +2,11 @@ Revision history for Perl extension Mojo-Iutils
 
 {{$NEXT}}
 
+0.02 2019-02-02T00:19:03Z
+
+	- passing pod tests
+	- adds unique method
+
 0.01 2019-01-31T18:39:13Z
 
     - original version

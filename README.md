@@ -78,6 +78,90 @@ main (\*)nix distributions, OSX, and Windows (Strawberry perl for cmd users, def
 
 [Mojo::Iutils](https://metacpan.org/pod/Mojo::Iutils) implements the following attributes:
 
+## app\_mode
+
+    my $iutils = Mojo::Iutils->new(app_mode => 'test');
+
+Used to force application mode. This value will be taken to generate the default base\_dir attribute;
+
+## base\_dir
+
+    my $base_dir = $iutils->base_dir;
+    $iutils = $iutils->base_dir($app->home('iutilsdir', $app->mode));
+
+Base directory to be used by [Mojo::Iutils](https://metacpan.org/pod/Mojo::Iutils). Must be the same for different applications if they
+need to communicate among them.
+
+It should include the mode of the application, otherwise testing will probably interfere with production
+files so you will not be able to test an application safelly on a production server.
+
+Defaults for a temporary directory. It also includes the running user name, so to avoid permission problems
+on automatic (matrix CI) installations with different users.
+
+## buffer\_size
+
+    my $buffer_size = $iutils->buffer_size;
+    my $iutils = Mojo::Iutils->new(buffer_size => 512);
+    $iutils = $iutils->buffer_size(1024);
+
+The size of the circular buffer used to store events. Should be big enough to
+handle slow attended events, or it will die with an overflow error.
+
+# METHODS
+
+[Mojo::Iutils](https://metacpan.org/pod/Mojo::Iutils) inherits all events from [Mojo::EventEmitter](https://metacpan.org/pod/Mojo::EventEmitter), and implements the following new ones:
+
+## iemit
+
+    $iutils = $iutils->iemit('foo');
+    $iutils = $iutils->iemit('foo', 123);
+
+Emit event to all connected processes. Similar to calling [Mojo::EventEmitter](https://metacpan.org/pod/Mojo::EventEmitter)'s emit method
+in all processes, but doesn't emit an error event if event is not registered.
+
+## istash
+
+    $iutils->istash(foo => 123);
+    my $foo = $iutils->istash('foo'); # 123
+    my %bar = $iutils->istash(bar => (baz => 23)); # %bar = (baz => 23)
+
+It supports three modes of operation. Just get recorded data:
+
+    my $scalar = $iutils->istash('foo');
+    my @array = $iutils->istash('bar');
+    my %hash = $iutils->istash('baz');
+
+Set data (returning same data):
+
+    my $scalar = $iutils->istash(foo => 'some scalar');
+    my @array = $iutils->istash(bar => qw/some array/;
+    my %hash = $iutils->istash(baz => (some => 'hash'));
+
+Modify data with code
+
+    $iutils->istash(foo => undef); # clears var foo
+    $iutils->istash)foo => sub {my @z = @_; push @z, $x; @z}; # pushes $x to array in foo
+
+The three operations are thread & fork safe. Get data gets a shared lock, while
+set and modify get an exclusive lock.
+
+## new
+
+    my $iutils = Mojo::Iutils->new;
+
+Constructs a new [Mojo::Iutils](https://metacpan.org/pod/Mojo::Iutils) object.
+
+## unique
+
+    my $u = $iutils->unique;
+    on($u => sub {...}); # register event with unique name
+
+Then in other part of the code, in any process that could have received $u value
+
+    $iutils->emit($u => @args);
+
+strings generated with this method are not broadcasted, but sent only to the target process
+
 # LICENSE
 
 Copyright (C) Daniel Mantovani.
