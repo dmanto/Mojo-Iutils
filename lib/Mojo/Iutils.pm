@@ -24,7 +24,7 @@ has base_dir => sub {
 
 has buffer_size => sub {128};
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 has [qw(app_mode sender_counter receiver_counter)];
 
 sub _get_vars_path {
@@ -450,11 +450,11 @@ Constructs a new L<Mojo::Iutils> object.
 =head2 unique
 
   my $u = $iutils->unique;
-  on($u => sub {...}); # register event with unique name
+  $iutils->on($u => sub {...}); # register event with unique name in same object
 
-Then in other part of the code, in any process that could have received $u value
+Then in other part of the code, in any process that knows $u value
 
-  $iutils->emit($u => @args);
+  $other_iutils->emit($u => @args);
 
 strings generated with this method are not broadcasted, but sent only to the target process
 

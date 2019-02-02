@@ -155,11 +155,11 @@ Constructs a new [Mojo::Iutils](https://metacpan.org/pod/Mojo::Iutils) object.
 ## unique
 
     my $u = $iutils->unique;
-    on($u => sub {...}); # register event with unique name
+    $iutils->on($u => sub {...}); # register event with unique name in same object
 
-Then in other part of the code, in any process that could have received $u value
+Then in other part of the code, in any process that knows $u value
 
-    $iutils->emit($u => @args);
+    $other_iutils->emit($u => @args);
 
 strings generated with this method are not broadcasted, but sent only to the target process
 
