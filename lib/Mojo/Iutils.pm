@@ -87,7 +87,7 @@ sub _read_event {
 }
 
 
-sub ikeys {
+sub _ikeys {
   my $self = shift;
   $self->_get_vars_path('dummy')
     unless $self->{varsdir};    # initializes $self->{varsdir}
@@ -178,7 +178,7 @@ sub new {
 
 sub unique {
   my $self = shift;
-  return '__'.$self->{server_port}.'_'. ++$self->{unique_count};
+  return '__' . $self->{server_port} . '_' . ++$self->{unique_count};
 }
 
 sub iemit {
@@ -233,6 +233,7 @@ sub iemit {
     );
   }
   $self->{sender_counter}++;
+  return $self;
 }
 
 
@@ -405,6 +406,57 @@ handle slow attended events, or it will die with an overflow error.
 =head1 METHODS
 
 L<Mojo::Iutils> inherits all events from L<Mojo::EventEmitter>, and implements the following new ones:
+
+=head2 iemit
+
+  $iutils = $iutils->iemit('foo');
+  $iutils = $iutils->iemit('foo', 123);
+
+Emit event to all connected processes. Similar to calling L<Mojo::EventEmitter>'s emit method
+in all processes, but doesn't emit an error event if event is not registered.
+
+=head2 istash
+
+  $iutils->istash(foo => 123);
+  my $foo = $iutils->istash('foo'); # 123
+  my %bar = $iutils->istash(bar => (baz => 23)); # %bar = (baz => 23)
+
+It supports three modes of operation. Just get recorded data:
+
+  my $scalar = $iutils->istash('foo');
+  my @array = $iutils->istash('bar');
+  my %hash = $iutils->istash('baz');
+
+Set data (returning same data):
+
+  my $scalar = $iutils->istash(foo => 'some scalar');
+  my @array = $iutils->istash(bar => qw/some array/;
+  my %hash = $iutils->istash(baz => (some => 'hash'));
+
+Modify data with code
+
+  $iutils->istash(foo => undef); # clears var foo
+  $iutils->istash)foo => sub {my @z = @_; push @z, $x; @z}; # pushes $x to array in foo
+
+The three operations are thread & fork safe. Get data gets a shared lock, while
+set and modify get an exclusive lock.
+
+=head2 new
+
+  my $iutils = Mojo::Iutils->new;
+
+Constructs a new L<Mojo::Iutils> object.
+
+=head2 unique
+
+  my $u = $iutils->unique;
+  on($u => sub {...}); # register event with unique name
+
+Then in other part of the code, in any process that could have received $u value
+
+  $iutils->emit($u => @args);
+
+strings generated with this method are not broadcasted, but sent only to the target process
 
 =head1 LICENSE
 
