@@ -1,3 +1,4 @@
+[![Build Status](https://travis-ci.org/dmanto/Mojo-Iutils.svg?branch=master)](https://travis-ci.org/dmanto/Mojo-Iutils) [![Build Status](https://img.shields.io/appveyor/ci/dmanto/Mojo-Iutils/master.svg?logo=appveyor)](https://ci.appveyor.com/project/dmanto/Mojo-Iutils/branch/master)
 # NAME
 
 Mojo::Iutils - Inter Process Communications Utilities without dependences

@@ -24,7 +24,7 @@ has base_dir => sub {
 
 has buffer_size => sub {128};
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 has [qw(app_mode sender_counter receiver_counter)];
 
 sub _get_vars_path {

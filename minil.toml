@@ -1,7 +1,7 @@
+author = "Daniel Mantovani <dmanto@cpan.org>"
+licence = "Perl_5"
 name = "Mojo-Iutils"
-# badges = ["travis"]
+badges = ["travis", "appveyor"]
 authority="cpan:DMANTO"
-
 module_maker="ModuleBuildTiny"
 static_install = "auto"
-
