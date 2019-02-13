@@ -1,7 +1,10 @@
 package Mojo::Iutils;
 use Mojo::Base 'Mojo::EventEmitter';
 use Carp 'croak';
+use Scalar::Util 'weaken';
+use POSIX ();
 use Fcntl ':flock';
+use Time::HiRes qw/sleep/;
 use File::Spec::Functions 'tmpdir';
 use Mojo::IOLoop;
 use Mojo::File 'path';
@@ -178,115 +181,187 @@ sub new {
 
 sub unique {
   my $self = shift;
-  return '__' . $self->{server_port} . '_' . ++$self->{unique_count};
+  return '__' . $self->{_lport} . '_' . ++$self->{unique_count};
 }
 
 sub iemit {
   my ($self, $event) = (shift, shift);
-  my @args = @_;
-  my @ports;
+  my @args      = @_;
+  my $unique_id = '';
 
-  my $idx;
+  my ($local_emit, $remote_emit);
   if ($event =~ /^__(\d+)_\d+$/) {    # unique send
-    @ports = ($1);
+    my $u = $1;
+    $local_emit  = $self->{_client} eq $u;
+    $remote_emit = !$local_emit;
+    $unique_id   = $u . ':';
   }
   else {
-    @ports = split /:/, ($self->istash('__ports') // '');
+    $local_emit = $remote_emit = 1;
   }
-  for my $p (@ports) {
-    if ($p == $self->{server_port}) {    # no need to send to itself
 
-      # CAVEAT $self->{events} hash is not docummented in Mojo::EE
-      $self->emit($event, @args) if $self->{events}{$event};
-      next;
+  # CAVEAT $self->{events} hash is not docummented in Mojo::EE
+  $self->emit($event, @args) if $local_emit && $self->{events}{$event};
+
+  $self->{_client}->write(
+    $unique_id . $self->_write_event($event => @args) . "\n" => sub {
+      $self->{sender_counter}++;
     }
-    $idx //= $self->_write_event($event => @args);
-    my $id;
-    $id = Mojo::IOLoop->client(
-      {address => '127.0.0.1', port => $p} => sub {
-        my ($loop, $err, $stream) = @_;
-        if ($stream) {
-          $stream->on(
-            error => sub {
-              my ($stream, $err) = @_;
-              $self->_delete_port($p);
-              $loop->remove($id);
-            }
-          );
-          $stream->on(
-            close => sub {
-              $loop->remove($id);
-            }
-          );
-          $stream->on(
-            read => sub {
-              my ($stream, $bytes) = @_;
-            }
-          );
-          $stream->write($idx => sub { shift->close });
-        }
-        else {
-          $self->_delete_port($p);
-          $loop->remove($id);
-        }
-      }
-    );
-  }
-  $self->{sender_counter}++;
+  ) if $remote_emit;
+
   return $self;
 }
 
 
 sub _init {
   my ($self) = @_;
-
-  # define broker msg server
-  my $id = Mojo::IOLoop->server(
-    {address => '127.0.0.1'} => sub {
-      my ($loop, $stream, $id) = @_;
-      $stream->on(
-        read => sub {
-          my ($stream, $bytes) = @_;
-          return unless $bytes && $bytes =~ /^(\d+)$/;
-          my $res   = $self->_read_event($1);
-          my $event = $res->{e};
-          my @args  = @{$res->{a}};
-
-          # CAVEAT $self->{events} hash is not docummented in Mojo::EE
-          $self->emit($event, @args) if $self->{events}{$event};
-          $self->{receiver_counter}++;
-        }
-      );
-    }
-  );
-
-  $self->{server_port} = Mojo::IOLoop->acceptor($id)->port;
-  $self->istash(
-    __ports => sub {
-      my %ports = map { $_ => undef } split /:/, (shift // '');
-      undef $ports{$self->{server_port}};
-      return join ':', keys %ports;
-    }
-  );
+  my $broker_port = -2;
+  while ($broker_port < 0) {
+    $broker_port = $self->istash(
+      __broker => sub {
+        my $p = shift;
+        if    (!defined $p) { $p = -1 }
+        elsif ($p eq -1)    { $p = -2 }
+        return $p;
+      }
+    );
+    $self->_broker_server
+      if $broker_port == -1;    # only one process will get this
+    $self->_broker_client($broker_port)
+      if $broker_port > 0;      # other processes eventually will get this
+    sleep .25;                  # be nice to other processes
+  }
   return $self;
 }
 
+sub _broker_server {
+  my ($self) = @_;
+  die "Can't fork: $!" unless defined(my $pid = fork);
+  if (!$pid) {
 
-sub _delete_port {
-  my ($self, $p) = @_;
-  $self->istash(
-    __ports => sub {
-      my %ports = map { $_ => undef } split /:/, (shift // '');
-      delete $ports{$p};
-      return join ':', keys %ports;
-    }
-  );
+    # define broker msg server
+    my $id = Mojo::IOLoop->server(
+      {address => '127.0.0.1'} => sub {
+        my ($loop, $stream, $id) = @_;
+        $stream->timeout(0);
+        my $rport = $stream->handle->peerport;
+        $self->{_conns}{$rport} = $stream;
+        my $pndg = '';
+        $stream->on(
+          read => sub {
+            my ($stream, $bytes) = @_;
+            return unless defined $bytes;
+            my @msgs = split /\n/, $pndg . $bytes, -1;    # keep last separator
+            $pndg = pop @msgs // '';
+            for my $msg (@msgs) {
+              next unless $msg && $msg =~ /(?:(\d+):)?(\d+)$/;
+              my ($unique, $idx) = ($1, $2);
+              if (defined $unique) {
+                $self->{_conns}{$unique}->write("$idx\n")
+                  if $self->{_conns}{$unique};
+              }
+              else {
+                for my $p (keys %{$self->{_conns}}) {
+                  $self->{_conns}{$p}->write("$idx\n")
+                    unless $p eq $rport;                  # skip the emitter
+                }
+              }
+            }
+          }
+        );
+        $stream->on(
+          close => sub {
+            delete $self->{_conns}{$rport};
+            my $left = join ':', keys %{$self->{_conns}};
+
+            # say STDERR "$$: recibio close para puerto $rport, quedan $left";
+            $loop->stop
+              unless keys %{$self->{_conns}};   # keep running if has connectons
+          }
+        );
+        $stream->on(
+          error => sub {
+            delete $self->{_conns}{$rport};
+            $loop->stop
+              unless keys %{$self->{_conns}};   # keep running if has connectons
+          }
+        );
+      }
+    );
+
+    $self->{server_port} = Mojo::IOLoop->acceptor($id)->port;
+    $self->istash(__broker => $self->{server_port});
+    Mojo::IOLoop->start;
+    $self->istash(__broker => undef);           #
+    POSIX::_exit(0);
+  }
+  return $self;                                 # parent
 }
 
+sub _broker_client {
+  my ($self, $port) = @_;
+  my $tid = Mojo::IOLoop->timer(
+    10 => sub {
+      my $loop = shift;
+      $self->istash(__broker => undef);         # too bad, server not working
+      die "Mojo::Iutils client can't connect to broker";
+    }
+  );
+  Mojo::IOLoop->client(
+    {address => '127.0.0.1', port => $port} => sub {
+      my ($loop, $err, $stream) = @_;
+      if ($stream) {
+        my $pndg = '';                          # pending data
+        $loop->remove($tid);                    # no timeout
+        $stream->timeout(0);                    # permanent
+        $stream->on(
+          read => sub {
+            my ($stream, $bytes) = @_;
+            return unless defined $bytes;
+            my @idxs = split /\n/, $pndg . $bytes, -1;    # keep last separator
+            $pndg = pop @idxs // '';
+            for my $idx (@idxs) {
+
+              # say STDERR "Cliente recibio idx $idx";
+              my $res   = $self->_read_event($idx);
+              my $event = $res->{e};
+              my @args  = @{$res->{a}};
+
+              # CAVEAT $self->{events} hash is not docummented in Mojo::EE
+              $self->emit($event, @args) if $self->{events}{$event};
+              $self->{receiver_counter}++;
+
+              # say STDERR "Recibio evento $event";
+            }
+          }
+        );
+        $stream->on(
+          close => sub {
+            delete $self->{_client};
+          }
+        );
+        $self->{_client} = $stream;                     # for interprocess emits
+        $self->{_lport}  = $stream->handle->sockport;   # as a client id
+        weaken $stream;
+      }
+    }
+  );
+  my $z;
+  while (!$self->{_client}) {
+    Mojo::IOLoop->timer(0.05 => sub { shift->stop_gracefully });
+    Mojo::IOLoop->start;
+
+    # say STDERR "Reintento numero " . ++$z;
+  }
+
+  # say STDERR "Cliente se conecto con puerto " . $self->{_lport};
+  return $self;
+}
 
 sub DESTROY {
   my $self = shift;
-  $self->_delete_port($self->{server_port});
+  $self->istash(__broker => undef) if defined $self->{server_port};
+  $self->{_client}->close if $self->{_client};
 }
 1;
 __END__

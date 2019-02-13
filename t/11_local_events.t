@@ -47,6 +47,7 @@ is \@evs, [[alpha => '⍺']], 'got event';
 my $uniquec1 = $c->unique;
 my $uniquec2 = $c->unique;
 my $d        = Mojo::Iutils->new;
+Mojo::IOLoop->start;
 my $uniqued1 = $d->unique;
 
 like $uniquec1, qr/^__\d+_\d+$/, "right unique format";
@@ -64,8 +65,7 @@ $c->on(
 $d->iemit($uniquec1 => (beta => 'β'));
 Mojo::IOLoop->recurring(
   0 => sub {
-    my $loop = shift;
-    Mojo::IOLoop->stop if !$c->sender_counter && $c->receiver_counter;
+    shift->stop if !$c->sender_counter && $c->receiver_counter;
   }
 );
 Mojo::IOLoop->start;
