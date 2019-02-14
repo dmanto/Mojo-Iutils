@@ -238,8 +238,11 @@ sub _broker_server {
   my ($self) = @_;
   die "Can't fork: $!" unless defined(my $pid = fork);
   if (!$pid) {
+    POSIX::setsid() or die "Can't start a new session: $!";
 
     # define broker msg server
+    die "Can't fork: $!" unless defined(my $pid2 = fork);
+    POSIX::_exit(0) if $pid2;
     my $id = Mojo::IOLoop->server(
       {address => '127.0.0.1'} => sub {
         my ($loop, $stream, $id) = @_;
@@ -342,7 +345,7 @@ sub _broker_client {
         );
         $self->{_client} = $stream;                     # for interprocess emits
         $self->{_lport}  = $stream->handle->sockport;   # as a client id
-        weaken $stream;
+        $self->{_client};
       }
     }
   );

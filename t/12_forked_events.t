@@ -51,17 +51,19 @@ for my $nfork (1 .. $cforks) {
   Mojo::IOLoop->recurring(
     1 => sub {
       my $loop = shift;
-    #   my $line
-    #     = "$$:Counters: "
-    #     . $m->sender_counter . ' '
-    #     . $m->receiver_counter . ' - ';
-    #   say STDERR $line;
+
+      #   my $line
+      #     = "$$:Counters: "
+      #     . $m->sender_counter . ' '
+      #     . $m->receiver_counter . ' - ';
+      #   say STDERR $line;
       Mojo::IOLoop->stop
         if $m->sender_counter == 1 && $m->receiver_counter == ($cforks - 1);
     }
   );
   Mojo::IOLoop->start;
   my $sync = $m->istash(sync => sub { ++$_[0] });
+
 #   say STDERR "$$: incremento sync a $sync";
   while ($m->istash('sync') < 2 * $cforks) {
     sleep .05;    # same as before
@@ -71,10 +73,15 @@ for my $nfork (1 .. $cforks) {
   exit(0);
 }
 wait();
+while (($c->istash('sync') // 0) < 2 * $cforks) {
+  sleep .05;      # be nice with other kids
+}
+sleep .5;
 is $c->istash('sync'), 2 * $cforks, 'sync';
 my @end_result;
 push @end_result, sprintf "from child # $_"
   for sort 1 .. $cforks;    # alfanumeric sort (i.e. 10 < 2)
 is [sort split(':', $c->istash("sal1"))], \@end_result, 'child #1 events';
-$c->DESTROY;
+
+# $c->DESTROY;
 done_testing;
