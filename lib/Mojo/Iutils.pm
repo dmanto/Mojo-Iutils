@@ -277,7 +277,7 @@ sub _broker_server {
             delete $self->{_conns}{$rport};
             my $left = join ':', keys %{$self->{_conns}};
 
-            # say STDERR "$$: recibio close para puerto $rport, quedan $left";
+            say STDERR "$$: recibio close para puerto $rport, quedan $left";
             $loop->stop
               unless keys %{$self->{_conns}};   # keep running if has connectons
           }
@@ -298,6 +298,7 @@ sub _broker_server {
     $self->istash(__broker => undef);           #
     POSIX::_exit(0);
   }
+  $self->{_isparent} = 1;
   return $self;                                 # parent
 }
 
@@ -343,13 +344,14 @@ sub _broker_client {
             delete $self->{_client};
           }
         );
-        $self->{_client} = $stream;                     # for interprocess emits
+        my $aux_stream = $stream;
+        $self->{_client} = $aux_stream;                     # for interprocess emits
         $self->{_lport}  = $stream->handle->sockport;   # as a client id
-        $self->{_client};
+        weaken($self->{_client});
       }
     }
   );
-  my $z;
+  # my $z;
   while (!$self->{_client}) {
     Mojo::IOLoop->timer(0.05 => sub { shift->stop_gracefully });
     Mojo::IOLoop->start;
@@ -363,6 +365,8 @@ sub _broker_client {
 
 sub DESTROY {
   my $self = shift;
+  say "Llamo a DESTROY en server" if defined $self->{server_port};
+  say "Llamo a DESTROY en client" if defined $self->{_client};
   $self->istash(__broker => undef) if defined $self->{server_port};
   $self->{_client}->close if $self->{_client};
 }
