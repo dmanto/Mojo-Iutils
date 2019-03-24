@@ -13,6 +13,8 @@ use Mojo::Iutils;
 use Mojo::File 'path';
 use Time::HiRes qw /sleep time/;
 
+plan skip_all 'old tests, will be deleted';
+
 $ENV{MOJO_MODE} = 'test';
 
 my $c = Mojo::Iutils->new;

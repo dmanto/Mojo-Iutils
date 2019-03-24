@@ -88,15 +88,19 @@ sub connect {
             for my $msg (@msgs) {
               next unless $msg && $msg =~ /(\d+)\s(\S)(.*)/;
               my ($o, $cmd, $content) = ($1, $2, $3);
+              my $nfork = $self->{nf} // 'undef';
               if ($cmd eq 'S') {
+                my $txt = "--- en $nfork, llama _read_ievent, desde "
+                  . $self->{_lieid};
                 $self->_read_ievent;
-                $loop->next_tick(sub { $self->{receiver_counter}++ });
+                $txt .= ', leyo hasta ' . $self->{_lieid};
+                say STDERR $txt;
               }
-              elsif ($cmd eq 'A') {                       # name acknowledged
+              elsif ($cmd eq 'A') {    # name acknowledged
                 $self->{connection_ready} = 1;
               }
               elsif ($cmd eq 'P' && $content =~ /^ING/) {
-                $content =~ s/I/O/;                       # PONG
+                $content =~ s/I/O/;    # PONG
                 $self->{_stream}->write("$o P$content\n");
               }
               elsif ($cmd eq 'P'
@@ -176,6 +180,7 @@ sub _read_ievent {
   )->expand(json => 'args')->hashes->each(sub {
     my $e = shift;
     $self->emit($e->{event}, @{$e->{args}}) if $self->{events}{$e->{event}};
+    $self->{receiver_counter}++;
     $self->{_lieid} = $e->{id};
   });
 }
@@ -204,12 +209,13 @@ sub iemit {
 
   # CAVEAT $self->{events} hash is not docummented in Mojo::EE
   $self->emit($event, @args) if $local_emit && $self->{events}{$event};
-
-  $self->_write_ievent($dest => $event => @args) and $self->{_stream}->write(
-    "$dest S\n" => sub {
-      $self->{sender_counter}++;
-    }
-  ) if $remote_emit;
+  if ($remote_emit) {
+    $self->_write_ievent($dest => $event => @args);
+    my $nc = $self->{_uid};
+    say STDERR "client $nc enviara $dest S";
+    $self->{_stream}->write("$dest S\n");
+    $self->{sender_counter}++;
+  }
   return $self;
 }
 

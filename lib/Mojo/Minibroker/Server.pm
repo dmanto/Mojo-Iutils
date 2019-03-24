@@ -110,7 +110,7 @@ sub _cleanup {
 sub start {
   my $self = shift;
   return undef unless $self->_check_and_lock;
-
+  $self->{_conns}     = {};
   $self->{_server_id} = Mojo::IOLoop->server(
     {address => '127.0.0.1'} => sub {
       my ($loop, $stream, $id) = @_;
@@ -120,7 +120,7 @@ sub start {
       $self->{_conns}{$origin}
         = {stream => $stream, init => $stime, last => $stime};
       weaken $self->{_conns}{$origin}{stream};
-      say STDERR "Conexion desde $origin";
+      say STDERR "Server en $$, conexion desde $origin";
       my $pndg = '';
       $stream->on(
         read => sub {
@@ -134,13 +134,21 @@ sub start {
             next unless $msg && $msg =~ /(\S+)\s(\S)(.*)/;
             my ($d, $cmd, $content) = ($1, $2, $3);
             if ($cmd eq '@') {                          # rename cmd
-              $self->{_conns}{$content} = delete $self->{_conns}{$origin};
+              my $odd = 'Lista actual: ' . join(', ', keys %{$self->{_conns}});
+              say STDERR $odd;
+              $self->{_conns}{$content} = $self->{_conns}{$origin};
+              delete $self->{_conns}{$origin};
+              say STDERR "origen $origin pasara a ser $content";
               $origin = $content;
               $stream->write("0 A\n");                  # acknowledges rename
+              my $ndd = 'Nueva lista: ' . join(', ', keys %{$self->{_conns}});
+              say STDERR $ndd;
               next;
             }
-            my @dests = $d ? split /:/, $d : keys %{$self->{_conns}};
+            my @dests  = $d ? split /:/, $d : keys %{$self->{_conns}};
             my $status = '';
+            my $ddd    = "=== Desde $$ lista a enviar: " . join(', ', @dests);
+            say STDERR $ddd;
             for my $dp (@dests) {
               next unless $self->{_conns}{$dp};
               if ($cmd eq '?') {
