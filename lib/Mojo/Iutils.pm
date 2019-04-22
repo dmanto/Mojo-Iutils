@@ -221,7 +221,7 @@ sub _init {
       __broker => sub {
         my $p = shift;
         if    (!defined $p) { $p = -1 }
-        elsif ($p eq -1)    { $p = -2 }
+        elsif ($p == -1)    { $p = -2 }
         return $p;
       }
     );
@@ -345,12 +345,13 @@ sub _broker_client {
           }
         );
         my $aux_stream = $stream;
-        $self->{_client} = $aux_stream;                     # for interprocess emits
+        $self->{_client} = $aux_stream;                 # for interprocess emits
         $self->{_lport}  = $stream->handle->sockport;   # as a client id
         weaken($self->{_client});
       }
     }
   );
+
   # my $z;
   while (!$self->{_client}) {
     Mojo::IOLoop->timer(0.05 => sub { shift->stop_gracefully });

@@ -1,23 +1,23 @@
 use Mojolicious::Lite;
 use Mojo::Iutils;
- 
+
 helper events => sub { state $events = Mojo::Iutils->new };
- 
+
 get '/' => 'chat';
- 
+
 websocket '/channel' => sub {
   my $c = shift;
 
   $c->inactivity_timeout(3600);
- 
+
   # Forward messages from the browser
   $c->on(message => sub { shift->events->iemit(mojochat => shift) });
- 
+
   # Forward messages to the browser
   my $cb = $c->events->on(mojochat => sub { $c->send(pop) });
   $c->on(finish => sub { shift->events->unsubscribe(mojochat => $cb) });
 };
- 
+
 # Minimal multiple-process WebSocket chat application for browser testing
 
 app->start;

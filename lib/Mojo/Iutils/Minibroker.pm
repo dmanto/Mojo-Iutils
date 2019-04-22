@@ -1,4 +1,4 @@
-package Mojo::Minibroker;
+package Mojo::Iutils::Minibroker;
 use Mojo::Base 'Mojo::EventEmitter';
 use Carp 'croak';
 use Scalar::Util 'weaken';
@@ -9,8 +9,8 @@ use Mojo::IOLoop;
 use Mojo::File 'path';
 use Mojo::Util;
 use Mojo::SQLite;
-use Mojo::Minibroker::Client;
-use Mojo::Minibroker::Server;
+use Mojo::Iutils::Minibroker::Client;
+use Mojo::Iutils::Minibroker::Server;
 
 use constant {MINIBROKER_DIR => '.minibroker',
   DEBUG => $ENV{MOJO_IUTILS_DEBUG} || 0,};
@@ -36,14 +36,14 @@ has client => sub {
   $self->{_has_client} = 1;
 
   # state $client =
-  Mojo::Minibroker::Client->new(sqlite => $self->sqlite, @_);
+  Mojo::Iutils::Minibroker::Client->new(sqlite => $self->sqlite, @_);
 };
 has server => sub {
   my $self = shift;
   $self->{_has_server} = 1;
 
   # state $server =
-  Mojo::Minibroker::Server->new(sqlite => $self->sqlite, @_);
+  Mojo::Iutils::Minibroker::Server->new(sqlite => $self->sqlite, @_);
 };
 has sqlite => sub { Mojo::SQLite->new('sqlite:' . shift->db_file) };
 has mode => sub { $ENV{MOJO_MODE} || $ENV{PLACK_ENV} || 'development' };
@@ -58,7 +58,8 @@ sub new {
 sub DESTROY {
   my $self = shift;
   return () if Mojo::Util::_global_destruction();
-  say STDERR "Al destroy de minibroker si lo llama";
+
+  # say STDERR "Al destroy de minibroker si lo llama";
   $self->client->DESTROY if delete $self->{_has_client};
   $self->server->DESTROY if delete $self->{_has_server};
 }

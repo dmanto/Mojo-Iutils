@@ -6,12 +6,13 @@
 *.swp
 *~
 .tidyall.d/
+.vscode/
+.vstags
 /.build/
 /.carton/
 /Build
 /Build.bat
 /Makefile
-/Mojo-Iutils-*
 /_build/
 /_build_params
 /blib
@@ -22,4 +23,3 @@ MYMETA.*
 cover_db/
 nytprof.out
 nytprof/
-.vscode/

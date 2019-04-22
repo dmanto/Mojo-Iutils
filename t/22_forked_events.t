@@ -9,12 +9,12 @@ use utf8;
 
 use Test2::IPC;
 use Test2::V0;
-use Mojo::Minibroker;
+use Mojo::Iutils::Minibroker;
 use Mojo::File 'path';
 use Time::HiRes qw /sleep time/;
 
 $ENV{MOJO_MODE} = 'test';
-my $m = Mojo::Minibroker->new(mode => 'test', app_name => 'mojotest');
+my $m = Mojo::Iutils::Minibroker->new(mode => 'test', app_name => 'mojotest');
 my $db = $m->sqlite->db;
 $db->query('drop table if exists auxtable');
 $db->query('
@@ -26,7 +26,7 @@ create table auxtable (
 $db->insert(auxtable => {key => 'sync',           ivalue => 0});
 $db->insert(auxtable => {key => 'server_started', ivalue => 0});
 
-my $cforks = 40;
+my $cforks = 10;
 
 for my $nfork (1 .. $cforks) {
   die "fork: $!" unless defined(my $pid = fork);
@@ -36,7 +36,7 @@ for my $nfork (1 .. $cforks) {
   # NO tests inside child code pls
 
   my @evs;
-  my $m = Mojo::Minibroker->new(mode => 'test', app_name => 'mojotest');
+  my $m = Mojo::Iutils::Minibroker->new(mode => 'test', app_name => 'mojotest');
   my $db = $m->sqlite->db;
   my $server_started;
 
@@ -47,21 +47,23 @@ for my $nfork (1 .. $cforks) {
 
     sleep .05;    # be nice with other kids
   }
-  say STDERR "child $nfork encontro server";
+
+  # say STDERR "child $nfork encontro server";
 
   my $cl = $m->client;
   $cl->connect;
-  say STDERR "child $nfork conectara a puerto: " . $cl->{broker_port};
+
+  # say STDERR "child $nfork conectara a puerto: " . $cl->{broker_port};
 
   # wait for server acknowledge of names (_uids);
-  say STDERR "child $nfork antes de connection ready";
+  # say STDERR "child $nfork antes de connection ready";
 
   while (!$cl->{connection_ready}) {
     Mojo::IOLoop->one_tick;
     sleep .1;
   }
-  say STDERR "child $nfork despues de connection ready";
-  $cl->{nf} = $nfork;
+
+  # say STDERR "child $nfork despues de connection ready";
   $cl->sender_counter(0)->receiver_counter(0);
   $cl->on(
     test1 => sub {
@@ -78,26 +80,18 @@ for my $nfork (1 .. $cforks) {
       = $db->select(auxtable => ['ivalue'], {key => 'sync'})->hash->{ivalue};
 
     # say STDERR "child $nfork lee sync $sync";
-    sleep .05;    # be nice with other kids
+    sleep .25;    # be nice with other kids
   }
   $cl->iemit(test1 => "from child # $nfork");
 
-#   Mojo::IOLoop->recurring(
-#     20 => sub {
-#       my $loop = shift;
-
-#       my $txt = "--- child $nfork ultimo leido: " . $cl->{_lieid};
-#       $cl->_read_ievent;
-#       $txt .= ', leyo hasta: ' . $cl->{_lieid};
-#       say STDERR $txt;
-#       Mojo::IOLoop->stop
-#         if $cl->sender_counter == 1 && $cl->receiver_counter == ($cforks - 1);
-
-#      #   say STDERR "child $nfork sender: ", $cl->sender_counter, ' receiver: ',
-#      #     $cl->receiver_counter;
-#     }
-#   );
-#   Mojo::IOLoop->start;
+  Mojo::IOLoop->recurring(
+    .15 => sub {
+      my $loop = shift;
+      Mojo::IOLoop->stop
+        if $cl->sender_counter == 1 && $cl->receiver_counter == ($cforks - 1);
+    }
+  );
+  Mojo::IOLoop->start;
   $db->update(auxtable => {ivalue => \"ivalue+1"}, {key => 'sync'});
 
 #   say STDERR "$$: incremento sync a $sync";
@@ -106,7 +100,7 @@ for my $nfork (1 .. $cforks) {
       = $db->select(auxtable => ['ivalue'], {key => 'sync'})->hash->{ivalue};
 
     # say STDERR "child $nfork lee sync $sync";
-    $cl->_read_ievent;
+    # $cl->_read_ievent;
     sleep .15;    # same as before
   }
 
@@ -116,7 +110,8 @@ for my $nfork (1 .. $cforks) {
 }
 my $srv = $m->server;
 $srv->start;
-say STDERR "Server inicia en $$";
+
+# say STDERR "Server inicia en $$";
 $db->update(auxtable => {ivalue => 1}, {key => 'server_started'});
 Mojo::IOLoop->start;
 wait();

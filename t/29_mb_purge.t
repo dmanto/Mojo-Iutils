@@ -3,7 +3,7 @@ BEGIN {
 }
 use utf8;
 use Test2::V0;
-use Mojo::Minibroker;
+use Mojo::Iutils::Minibroker;
 
 # this function will allow to fake time in CURRENT_TIMESTAMP's sqlite function
 
@@ -19,7 +19,7 @@ sub faketime {
 }
 
 
-my $m = Mojo::Minibroker->new(mode => 'test', app_name => 'mojotest');
+my $m = Mojo::Iutils::Minibroker->new(mode => 'test', app_name => 'mojotest');
 $m->sqlite->db->dbh->sqlite_create_function('current_timestamp', -1,
   \&faketime);
 
