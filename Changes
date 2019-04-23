@@ -2,6 +2,9 @@ Revision history for Perl extension Mojo-Iutils
 
 {{$NEXT}}
 
+0.07 2019-04-23T01:47:20Z
+	- Add pod for Mojo::Iutils::Minibroker::Server.pm
+
 0.06 2019-04-23T01:22:02Z
 
 	- Mojo::Minibroker* moved to Mojo::Iutils::Minibroker*

@@ -149,7 +149,8 @@ sub start {
                              # say STDERR $ndd;
                             next;
                         }
-                        my @dests = $d
+                        my @dests =
+                          $d
                           ? split /:/, $d
                           : keys %{ $self->{_conns} };
                         my $status = '';
@@ -252,9 +253,23 @@ hold port information so clients can connect to it
 L<Mojo::Iutils::Minibroker::Server> inherits all methods from L<Mojo::EventEmitter> and implements
 the following ones:
 
+=head2 purge_events
+
+  $srv->purge_events;
+
+Used to purge Minibroker server old events
+
 =head2 new
 
+  my $srv = Mojo::Iutils::Minibroker::Server->new;
+
 Construct a new L<Mojo::Iutils::Minibroker::Server> object.
+
+=head2 start
+
+  $srv->start;
+
+Used to get Minibroker server running
 
 
 
