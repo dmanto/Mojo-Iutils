@@ -42,6 +42,9 @@
       },
       "runtime" : {
          "requires" : {
+            "File::HomeDir" : "0",
+            "List::Util" : "0",
+            "Mojo::SQLite" : "0",
             "Mojolicious" : "8.11",
             "Sereal" : "4.005",
             "perl" : "5.012001"
@@ -65,7 +68,7 @@
          "web" : "https://github.com/dmanto/Mojo-Iutils"
       }
    },
-   "version" : "0.05",
+   "version" : "0.06",
    "x_authority" : "cpan:DMANTO",
    "x_contributors" : [
       "Daniel Mantovani <daniel@gmail.com>",

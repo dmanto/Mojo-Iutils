@@ -73,7 +73,7 @@ $cl->on(
   }
 );
 my $dport = $cl2->{_uid};
-$cl->ping($dport => 'test 001');
+$cl->_ping($dport => 'test 001');
 Mojo::IOLoop->one_tick while !@pings;
 is [@pings], [$cl2->{_uid}, 'PONG: test 001'], 'pong received';
 my @server_status;
@@ -83,7 +83,7 @@ $cl->on(
     push @server_status, $status;
   }
 );
-$cl->server_status;
+$cl->_server_status;
 Mojo::IOLoop->one_tick while !@server_status;
 my ($cl_init,  $cl_last)  = @{$server_status[0]->{$cl->{_uid}}}{qw/init last/};
 my ($cl2_init, $cl2_last) = @{$server_status[0]->{$cl2->{_uid}}}{qw/init last/};

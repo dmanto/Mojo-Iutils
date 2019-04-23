@@ -47,7 +47,7 @@ sub get_broker_port {
     return $self;
 }
 
-sub get_last_ievents_id {
+sub _get_last_ievents_id {
     my $self     = shift;
     my $last_row = $self->sqlite->db->select(
         sqlite_sequence => 'seq',
@@ -71,7 +71,7 @@ sub connect {
             die "Mojo::Iutils::Minibroker::Client can't connect to broker";
         }
     );
-    $self->get_last_ievents_id;          # no ievents before first connection
+    $self->_get_last_ievents_id;         # no ievents before first connection
     delete $self->{_lport};              # no local port yet
     delete $self->{connection_ready};    # no valid connection yet
     $self->{id} = Mojo::IOLoop->client(
@@ -226,7 +226,7 @@ sub iemit {
     return $self;
 }
 
-sub ping {
+sub _ping {
     my ( $self, $d, $cont ) = @_;
     $cont = $cont ? ": $cont" : '';
     $self->{_stream}->write("$d PING$cont\n");
@@ -237,7 +237,7 @@ sub unique {
     return '__' . $self->{_uid} . '_' . ++$self->{_unique_count};
 }
 
-sub server_status {
+sub _server_status {
     shift->{_stream}->write("0 ?\n");
 }
 
@@ -283,6 +283,30 @@ L<Mojo::SQLite> object used to sync processes, and to store all data.
 
 L<Mojo::Iutils::Minibroker::Client> inherits all methods from L<Mojo::EventEmitter> and implements
 the following ones:
+
+=head2 connect
+
+  $cl->connect;
+
+Used to connect to the Minibroker server
+
+=head2 get_broker_port
+
+  my $port = $cl->get_broker_port;
+
+Used to get Minibroker server port (local port)
+
+=head2 iemit
+
+  $cl->iemit(event => @args);
+
+Used to emit an interprocess event
+
+=head2 unique
+
+  my $u = $cl->unique;
+
+Used to get an intersystem unique event name
 
 =head2 new
 

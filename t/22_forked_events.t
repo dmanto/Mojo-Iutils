@@ -26,7 +26,7 @@ create table auxtable (
 $db->insert(auxtable => {key => 'sync',           ivalue => 0});
 $db->insert(auxtable => {key => 'server_started', ivalue => 0});
 
-my $cforks = 10;
+my $cforks = 3;
 
 for my $nfork (1 .. $cforks) {
   die "fork: $!" unless defined(my $pid = fork);

@@ -2,6 +2,11 @@ Revision history for Perl extension Mojo-Iutils
 
 {{$NEXT}}
 
+0.06 2019-04-23T01:22:02Z
+
+	- Mojo::Minibroker* moved to Mojo::Iutils::Minibroker*
+	- Forket tests limited to 3 processes
+
 0.05 2019-02-02T00:46:39Z
 
 	- more typos fixed
