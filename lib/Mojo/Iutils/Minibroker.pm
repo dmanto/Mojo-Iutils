@@ -14,7 +14,7 @@ use Mojo::Iutils::Minibroker::Server;
 
 use constant {MINIBROKER_DIR => '.minibroker',
   DEBUG => $ENV{MOJO_IUTILS_DEBUG} || 0,};
-our $VERSION = '0.07';
+our $VERSION = '0.08';
 
 has db_file => sub {
   my $self = shift;
