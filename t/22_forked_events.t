@@ -25,8 +25,9 @@ create table auxtable (
 )');
 $db->insert(auxtable => {key => 'sync',           ivalue => 0});
 $db->insert(auxtable => {key => 'server_started', ivalue => 0});
+$db->disconnect;    # avoid windows problems (cygwin) with open db
 
-my $cforks = 3;
+my $cforks = 6;
 
 for my $nfork (1 .. $cforks) {
   die "fork: $!" unless defined(my $pid = fork);
@@ -48,12 +49,12 @@ for my $nfork (1 .. $cforks) {
     sleep .05;    # be nice with other kids
   }
 
-  say STDERR "child $nfork encontro server";
+  # say STDERR "child $nfork encontro server";
 
   my $cl = $m->client;
   $cl->connect;
 
-  say STDERR "child $nfork conectara a puerto: " . $cl->{broker_port};
+  # say STDERR "child $nfork conectara a puerto: " . $cl->{broker_port};
 
   # wait for server acknowledge of names (_uids);
   # say STDERR "child $nfork antes de connection ready";
@@ -63,7 +64,7 @@ for my $nfork (1 .. $cforks) {
     sleep .1;
   }
 
-  say STDERR "child $nfork despues de connection ready";
+  # say STDERR "child $nfork despues de connection ready";
   $cl->sender_counter(0)->receiver_counter(0);
   $cl->on(
     test1 => sub {
@@ -79,7 +80,7 @@ for my $nfork (1 .. $cforks) {
     $sync
       = $db->select(auxtable => ['ivalue'], {key => 'sync'})->hash->{ivalue};
 
-    say STDERR "child $nfork lee sync $sync";
+    # say STDERR "child $nfork lee sync $sync";
     sleep .25;    # be nice with other kids
   }
   $cl->iemit(test1 => "from child # $nfork");
@@ -94,12 +95,12 @@ for my $nfork (1 .. $cforks) {
   Mojo::IOLoop->start;
   $db->update(auxtable => {ivalue => \"ivalue+1"}, {key => 'sync'});
 
-  say STDERR "$$: incremento sync a $sync";
+  # say STDERR "$$: incremento sync a $sync";
   while ($sync < 2 * $cforks) {
     $sync
       = $db->select(auxtable => ['ivalue'], {key => 'sync'})->hash->{ivalue};
 
-    say STDERR "child $nfork lee sync $sync";
+    # say STDERR "child $nfork lee sync $sync";
     # $cl->_read_ievent;
     sleep .15;    # same as before
   }
@@ -111,7 +112,8 @@ for my $nfork (1 .. $cforks) {
 my $srv = $m->server;
 $srv->start;
 
-say STDERR "Server inicia en $$";
+# say STDERR "Server inicia en $$";
+$db = $m->sqlite->db;
 $db->update(auxtable => {ivalue => 1}, {key => 'server_started'});
 Mojo::IOLoop->start;
 wait();
