@@ -10,20 +10,27 @@ use File::HomeDir;
 use File::Spec::Functions 'tmpdir';
 
 delete $ENV{MOJO_MODE};
+delete $ENV{MOJO_MINIBROKER_NAME};
 my $m = Mojo::Iutils::Minibroker->new;
 is $m->db_file,
   path(File::HomeDir->my_home, '.minibroker', 'noname', 'development.db')
   ->to_string, 'correct home db_file, no mode';
 
-$m = Mojo::Iutils::Minibroker->new(mode => 'test', app_name => 'mojotest');
+$m = Mojo::Iutils::Minibroker->new(mode => 'test', name => 'mojotest');
 is $m->db_file,
   path(File::HomeDir->my_home, '.minibroker', 'mojotest', 'test.db')->to_string,
-  'correct home db_file';
+  'correct home db_file, no MOJO_MODE';
 $ENV{MOJO_MODE} = 'test';
 $m = Mojo::Iutils::Minibroker->new;
 is $m->db_file,
   path(File::HomeDir->my_home, '.minibroker', 'noname', 'test.db')->to_string,
-  'correct home db_file';
+  'correct home db_file, with MOJO_MODE set';
+
+$ENV{MOJO_MINIBROKER_NAME} = 'somename';
+$m = Mojo::Iutils::Minibroker->new;
+is $m->db_file,
+  path(File::HomeDir->my_home, '.minibroker', 'somename', 'test.db')->to_string,
+  'correct home db_file, with MOJO_MODE and MOJO_MINIBROKER_NAME set';
 
 # lock scheme for server after client
 my $cl  = $m->client;
@@ -113,7 +120,7 @@ my $uniquecl2_1 = $cl2->unique;
 
 like $uniquecl_1, qr/^__\d+_\d+$/, "right unique format";
 isnt $uniquecl_1, $uniquecl_2,  "uniqs are different";
-isnt $uniquecl_1, $uniquecl2_1, "different objects unique differ";
+isnt $uniquecl_1, $uniquecl2_1, "unique differ on different objects";
 
 my @unique_evs;
 $cl->sender_counter(0)->receiver_counter(0);
@@ -126,6 +133,5 @@ $cl->on(
 $cl2->iemit($uniquecl_1 => (gamma => 'γ'));
 Mojo::IOLoop->one_tick while @unique_evs < 1;
 is \@unique_evs, [[gamma => 'γ']], 'got unique event';
-
 
 done_testing;

@@ -12,56 +12,83 @@ use Mojo::SQLite;
 use Mojo::Iutils::Minibroker::Client;
 use Mojo::Iutils::Minibroker::Server;
 
-use constant {MINIBROKER_DIR => '.minibroker',
-  DEBUG => $ENV{MOJO_IUTILS_DEBUG} || 0,};
-our $VERSION = '0.08';
+# use Mojo::Loader qw/data_section/;
+use Data::Dumper;
+use constant {
+    MINIBROKER_DIR => '.minibroker',
+    DEBUG          => $ENV{MOJO_IUTILS_DEBUG} || 0,
+};
+our $VERSION = '0.09';
 
 has db_file => sub {
-  my $self = shift;
-  my $p;
-  $p = $self->use_temp_dir
-    ? path(tmpdir,
-    MINIBROKER_DIR . '_'
-      . (eval { scalar getpwuid($<) } || getlogin || 'nobody'))
-    : path(File::HomeDir->my_home, MINIBROKER_DIR);
-  $p = path($self->base_dir, MINIBROKER_DIR) if $self->base_dir;
-  $p = $p->child($self->app_name // 'noname');
-  $p->make_path;
-  $p = $p->child($self->mode . '.db');
-  return $p->to_string;
+    my $self = shift;
+    my $p;
+    $p =
+      $self->use_temp_dir
+      ? path( tmpdir,
+        MINIBROKER_DIR . '_'
+          . ( eval { scalar getpwuid($<) } || getlogin || 'nobody' ) )
+      : path( File::HomeDir->my_home, MINIBROKER_DIR );
+    $p = path( $self->base_dir, MINIBROKER_DIR ) if $self->base_dir;
+    $p = $p->child( $self->name );
+    $p->make_path;
+    $p = $p->child( $self->mode . '.db' );
+    return $p->to_string;
 };
 
 has client => sub {
-  my $self = shift;
-  $self->{_has_client} = 1;
+    my $self = shift;
+    $self->{_has_client} = 1;
 
-  # state $client =
-  Mojo::Iutils::Minibroker::Client->new(sqlite => $self->sqlite, @_);
+    # state $client =
+    Mojo::Iutils::Minibroker::Client->new( sqlite => $self->sqlite, @_ );
 };
 has server => sub {
-  my $self = shift;
-  $self->{_has_server} = 1;
+    my $self = shift;
+    $self->{_has_server} = 1;
 
-  # state $server =
-  Mojo::Iutils::Minibroker::Server->new(sqlite => $self->sqlite, @_);
+    # state $server =
+    Mojo::Iutils::Minibroker::Server->new( sqlite => $self->sqlite, @_ );
 };
-has sqlite => sub { Mojo::SQLite->new('sqlite:' . shift->db_file) };
-has mode => sub { $ENV{MOJO_MODE} || $ENV{PLACK_ENV} || 'development' };
-has [qw(app_name base_dir use_temp_dir sender_counter receiver_counter)];
+has sqlite => sub { Mojo::SQLite->new( 'sqlite:' . shift->db_file ) };
+has mode   => sub { $ENV{MOJO_MODE} || $ENV{PLACK_ENV} || 'development' };
+has name   => sub { $ENV{MOJO_MINIBROKER_NAME} || 'noname' };
+has [qw(base_dir use_temp_dir sender_counter receiver_counter)];
 
 sub new {
-  my $self = shift->SUPER::new(@_);
-  $self->sqlite->auto_migrate(1)->migrations->name('minibroker')->from_data;
-  return $self;
+    my $self = shift->SUPER::new(@_);
+    $self->sqlite->auto_migrate(1)->migrations->name('minibroker')
+      ->from_string(
+        qq{-- 1 up
+create table if not exists __mb_global_ints (
+    key text not null primary key,
+    value integer,
+    tstamp text not null default current_timestamp
+);
+insert into __mb_global_ints (key, value) VALUES ('port', 0), ('uniq', 1);
+create table if not exists __mb_ievents (
+  id integer primary key autoincrement,
+  target integer not null,
+  origin integer not null,
+  event text not null,
+  args text not null,
+  created text not null default current_timestamp
+)
+
+-- 1 down
+drop table if exists __mb_ievents;
+drop table if exists __mb_global_ints;}
+      );
+    return $self;
 }
 
 sub DESTROY {
-  my $self = shift;
-  return () if Mojo::Util::_global_destruction();
+    my $self = shift;
+    return () if Mojo::Util::_global_destruction();
 
-  # say STDERR "Al destroy de minibroker si lo llama";
-  $self->client->DESTROY if delete $self->{_has_client};
-  $self->server->DESTROY if delete $self->{_has_server};
+    # say STDERR "Al destroy de minibroker si lo llama";
+    $self->client->DESTROY if delete $self->{_has_client};
+    $self->server->DESTROY if delete $self->{_has_server};
 }
 1;
 
@@ -248,23 +275,3 @@ Daniel Mantovani E<lt>dmanto@cpan.orgE<gt>
 __DATA__
 
 @@ minibroker
--- 1 up
-create table if not exists __mb_global_ints (
-    key text not null primary key,
-    value integer,
-    tstamp text not null default current_timestamp
-);
-insert into __mb_global_ints (key, value) VALUES ('port', 0), ('uniq', 1);
-create table if not exists __mb_ievents (
-  id integer primary key autoincrement,
-  target integer not null,
-  origin integer not null,
-  event text not null,
-  args text not null,
-  created text not null default current_timestamp
-)
-
--- 1 down
-drop table if exists __mb_ievents;
-drop table if exists __mb_global_ints;
-

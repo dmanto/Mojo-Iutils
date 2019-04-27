@@ -1,31 +1,41 @@
 use strict;
 use warnings;
-
+use utf8;
 
 BEGIN {
   $ENV{MOJO_REACTOR} = 'Mojo::Reactor::Poll';
 }
-use utf8;
-
 use Test2::IPC;
 use Test2::V0;
 use Mojo::Iutils::Minibroker;
 use Mojo::File 'path';
 use Time::HiRes qw /sleep time/;
 
-$ENV{MOJO_MODE} = 'test';
-my $m = Mojo::Iutils::Minibroker->new(mode => 'test', app_name => 'mojotest');
-my $db = $m->sqlite->db;
-$db->query('drop table if exists auxtable');
-$db->query('
+$ENV{MOJO_MODE}            = 'test';
+$ENV{MOJO_MINIBROKER_NAME} = 'mojotest';
+### DB initialization. Avoid instatiate DBD::SQLite in parent before forks
+die "fork: $!" unless defined(my $init_pid = fork);
+if ($init_pid) { wait() }    # block until DB is initialized
+else {
+  my $m  = Mojo::Iutils::Minibroker->new;
+  my $db = $m->sqlite->db;
+  $db->query('drop table if exists auxtable');
+  $db->query('
 create table auxtable (
     key text not null primary key,
     ivalue integer,
     tvalue text
 )');
-$db->insert(auxtable => {key => 'sync',           ivalue => 0});
-$db->insert(auxtable => {key => 'server_started', ivalue => 0});
-$db->disconnect;    # avoid windows problems (cygwin) with open db
+  $db->insert(auxtable => {key => 'sync',           ivalue => 0});
+  $db->insert(auxtable => {key => 'server_started', ivalue => 0});
+
+  # no minibroker should be running, this is a test db
+  $db->update(
+    __mb_global_ints => {value => 0, tstamp => \"current_timestamp"},
+    {key => 'port'}
+  );
+  exit(0);
+}
 
 my $cforks = 6;
 
@@ -37,7 +47,7 @@ for my $nfork (1 .. $cforks) {
   # NO tests inside child code pls
 
   my @evs;
-  my $m = Mojo::Iutils::Minibroker->new(mode => 'test', app_name => 'mojotest');
+  my $m  = Mojo::Iutils::Minibroker->new;
   my $db = $m->sqlite->db;
   my $server_started;
 
@@ -106,14 +116,15 @@ for my $nfork (1 .. $cforks) {
   }
 
   $db->insert(auxtable => {key => "sal$nfork", tvalue => join(':', @evs)});
-  sleep .05;
   exit(0);
 }
+
+# after all childs forked, it is safe to use DBD::SQLite in parent
+my $m   = Mojo::Iutils::Minibroker->new;
+my $db  = $m->sqlite->db;
 my $srv = $m->server;
 $srv->start;
 
-# say STDERR "Server inicia en $$";
-$db = $m->sqlite->db;
 $db->update(auxtable => {ivalue => 1}, {key => 'server_started'});
 Mojo::IOLoop->start;
 wait();
@@ -123,7 +134,6 @@ while ($sync < 2 * $cforks) {
   $sync = $db->select(auxtable => ['ivalue'], {key => 'sync'})->hash->{ivalue};
   sleep .05;    # be nice with other kids
 }
-sleep .5;
 is $sync, 2 * $cforks, 'sync';
 my @end_result;
 push @end_result, sprintf "from child # $_"
@@ -135,5 +145,4 @@ is [
   ],
   \@end_result, 'child #1 events';
 
-# $c->DESTROY;
 done_testing;

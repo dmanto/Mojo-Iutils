@@ -72,7 +72,7 @@ sub _check_and_lock {
     return $r->sth->rows;    # amount of updated rows (0 or 1)
 }
 
-# atomically looks for key 'port' on ta__mb_global_ints whith value -2,
+# atomically looks for key 'port' on table __mb_global_ints whith value -2,
 # changing to <$self->server_port> and returning true (1)
 # otherwise nothing happens and returns false (0)
 # the <$self->server_port> value should prevent other servers from trying to start running
