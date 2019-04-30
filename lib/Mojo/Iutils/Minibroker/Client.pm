@@ -11,6 +11,9 @@ use Mojo::SQLite;
 has 'sqlite';
 has get_broker_port_timeout   => sub { 10 };
 has client_connection_timeout => sub { 5 };
+
+# time between last event checked and new pool on local events table
+has pool_time => sub { .25 };
 has [qw/sender_counter receiver_counter/];
 
 # atomically looks for key 'port' on table __mb_global_ints whith a value of 0,
@@ -189,6 +192,7 @@ sub _read_ievent {
             $self->{_lieid} = $e->{id};
         }
     );
+    Mojo::IOLoop->timer( $self->pool_time => sub { $self->_read_ievent } );
 }
 
 sub _rename {

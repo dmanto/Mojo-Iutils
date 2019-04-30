@@ -24,27 +24,24 @@ has 'server_port';
 # <origin><space char><command char>[<content>]<EOR char>
 #
 # where:
-#   destination:  is the port number of the targetted client connection, as seen by the server.
-#                 : char separates ports when more than one targeted client is needed
-#                 0 means all connected ports
+#   destination:  is the id number of the targetted remote client connection, as known by the server.
+#                 : char separates id numbers when more than one targeted client is needed
+#                 0 means all connected clients
 #
-#   origin:       is the port number of the originating client, as seen by the server
+#   origin:       is the id number of the originating client, as known by the server
 #
 #   space char:   space (0x20) char
 #
 #   command char: '?' asks for last activity of targeted clients. Server will return a string
-#                 in the format ?<client port1>:<last activity 1>: ... <EOR char>.
+#                 in the format ?<client id number 1>:<last activity 1>: ... <EOR char>.
 #                 <last activity N> here is the epoch time in miliseconds from the last message
 #                 received by the server from that client.
 #                 <origin> will be '0' in this particular answer.
 #                 on any other command char, server will just resend command and content to
 #                 all indicated targets
 #                 '!' is an order to close <destination> connection
-#                 'I' (0x49 char) means Interprocess emit. Content will be the key of a table
-#                 that will be accessed from the target client to recover original arguments
-#                 and the event name should be fired. Note that the server doesn't do anything
-#                 special to process this command, just resend to informed destinations
-#
+#                 'S' (0x53 char) means Interprocess sincronization order. Client corresponding
+#                 to destination will need to syncronize against local events table
 
 has purge_threshold => sub { 600 };    # will purge
 has purge_interval =>
@@ -115,8 +112,10 @@ sub start {
         { address => '127.0.0.1' } => sub {
             my ( $loop, $stream, $id ) = @_;
             $stream->timeout(0);
-            my $origin = $stream->handle->peerport;    # remote port
-            my $stime  = int( 1000 * steady_time );    # truncate should be ok
+            my $origin = 'P_'
+              . $stream->handle
+              ->peerport;    # remote port as unique reference until rename
+            my $stime = int( 1000 * steady_time );    # truncate should be ok
             $self->{_conns}{$origin} =
               { stream => $stream, init => $stime, last => $stime };
             weaken $self->{_conns}{$origin}{stream};
