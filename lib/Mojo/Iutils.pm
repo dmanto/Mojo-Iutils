@@ -2,377 +2,299 @@ package Mojo::Iutils;
 use Mojo::Base 'Mojo::EventEmitter';
 use Carp 'croak';
 use Scalar::Util 'weaken';
-use POSIX ();
-use Fcntl ':flock';
 use Time::HiRes qw/sleep/;
 use File::Spec::Functions 'tmpdir';
+use File::HomeDir;
 use Mojo::IOLoop;
 use Mojo::File 'path';
 use Mojo::Util;
-use Encode qw/decode encode/;
-use Sereal qw {sereal_encode_with_object sereal_decode_with_object};
+use Mojo::SQLite;
+use Mojo::Iutils::Client;
+use Mojo::Iutils::Server;
+
+# use Mojo::Loader qw/data_section/;
+use Data::Dumper;
 use constant {
-  IUTILS_DIR  => 'mojo_iutils_',
-  DEBUG       => $ENV{MOJO_IUTILS_DEBUG} || 0,
-  VARS_DIR    => 'vars',
-  BUFFERS_DIR => 'buffers',
+    MOJO_IUTILS_SLBROKER_DIR => '.slbroker',
+    DEBUG          => $ENV{MOJO_IUTILS_DEBUG} || 0,
 };
-
-has base_dir => sub {
-  my $mode = shift->app_mode // $ENV{MOJO_MODE};
-  my $p    = path(tmpdir,
-    IUTILS_DIR . (eval { scalar getpwuid($<) } || getlogin || 'nobody'));
-  return ($mode ? $p->child($mode) : $p)->to_string;
-};
-
-has buffer_size => sub {128};
-
 our $VERSION = '0.09';
-has [qw(app_mode sender_counter receiver_counter)];
 
-sub _get_vars_path {
-  my ($self, $key) = @_;
-  die "Key $key not valid" unless $key =~ qr/^[\w\.-]+$/;
-  unless ($self->{varsdir})
-  {    # inicializes $self->{varsdir} & $self->{vars_semaphore}
-    $self->{varsdir} = path($self->base_dir, VARS_DIR);
-    $self->{varsdir}->make_path unless -d $self->{varsdir};
-    $self->{vars_semaphore} = $self->{varsdir}->sibling('vars.lock')->to_string;
-  }
-  return $self->{varsdir}->child($key)->to_string;
+has db_file => sub {
+    my $self = shift;
+    my $p;
+    $p =
+      $self->use_temp_dir
+      ? path( tmpdir,
+        MOJO_IUTILS_SLBROKER_DIR . '_'
+          . ( eval { scalar getpwuid($<) } || getlogin || 'nobody' ) )
+      : path( File::HomeDir->my_home, MOJO_IUTILS_SLBROKER_DIR );
+    $p = path( $self->base_dir, MOJO_IUTILS_SLBROKER_DIR ) if $self->base_dir;
+    $p = $p->child( $self->name );
+    $p->make_path;
+    $p = $p->child( $self->mode . '.db' );
+    return $p->to_string;
+};
+
+has client => sub {
+    my $self = shift;
+    $self->{_has_client} = 1;
+
+    # state $client =
+    Mojo::Iutils::Minibroker::Client->new( sqlite => $self->sqlite, @_ );
+};
+has server => sub {
+    my $self = shift;
+    $self->{_has_server} = 1;
+
+    # state $server =
+    Mojo::Iutils::Minibroker::Server->new( sqlite => $self->sqlite, @_ );
+};
+has sqlite => sub { Mojo::SQLite->new( 'sqlite:' . shift->db_file ) };
+has mode   => sub { $ENV{MOJO_MODE} || $ENV{PLACK_ENV} || 'development' };
+has name   => sub { $ENV{MOJO_MINIBROKER_NAME} || 'noname' };
+has [qw(base_dir use_temp_dir sender_counter receiver_counter)];
+
+has purge_threshold => sub { 600 };    # will purge
+has purge_interval =>
+  sub { 10 };    # amount of seconds between purges on table iemits
+
+sub purge_events {
+    my $self = shift;
+    $self->sqlite->db->query(
+        "delete from __mb_ievents where created <= datetime('now', ?)",
+        -$self->purge_threshold . " seconds" );
+    return $self;
 }
 
-
-sub _get_buffers_path {
-  my ($self, $n) = @_;
-  die "Emit ID $n not valid" unless $n =~ /^\d+$/;    # only integers are valid
-  unless ($self->{buffersdir})
-  {    # inicializes $self->{buffersdir} & $self->{buffers_semaphore}
-    $self->{buffersdir} = path($self->base_dir, BUFFERS_DIR);
-    $self->{buffersdir}->make_path unless -d $self->{buffersdir};
-    $self->{buffers_semaphore}
-      = $self->{buffersdir}->sibling('buffers.lock')->to_string;
-  }
-  return $self->{buffersdir}->child(sprintf 'E%07d', $n % $self->buffer_size)
-    ->to_string;
+# atomically looks for key 'port' on table __mb_global_ints whith values 0 or -1,
+# changing to -2 and returning true (1)
+# otherwise nothing happens and returns false (0)
+# the -2 value should prevent other clients or servers from taken the lock
+sub _server_check_and_lock {
+    my $self = shift;
+    my $db   = $self->sqlite->db;
+    my $r    = $db->update(
+        __mb_global_ints => { value => -2, tstamp => \"current_timestamp" },
+        { key => 'port', value => { -in => [ 0, -1 ] } }
+    );
+    return $r->sth->rows;    # amount of updated rows (0 or 1)
 }
 
-
-sub _write_event {
-  my ($self, $event, @args) = @_;
-  my $idx = $self->istash(__buffers_idx => sub { ++$_[0] });
-  my $fname = _get_buffers_path($self, $idx);
-  $self->{enc} //= Sereal::Encoder->new;
-  my $bytes = &sereal_encode_with_object($self->{enc},
-    {i => $idx, e => $event, a => \@args});
-  open my $wev, '>', $fname or die "Couldn't open event file: $!";
-  binmode $wev;
-  flock($wev, LOCK_EX) or die "Couldn't lock $fname: $!";
-  print $wev $bytes;
-  close($wev) or die "Couldn't close $fname: $!";
-  return $idx;
+# atomically looks for key 'port' on table __mb_global_ints whith value -2,
+# changing to <$self->server_port> and returning true (1)
+# otherwise nothing happens and returns false (0)
+# the <$self->server_port> value should prevent other servers from trying to start running
+sub _server_store_and_unlock {
+    my $self = shift;
+    my $db   = $self->sqlite->db;
+    my $r    = $db->update(
+        __mb_global_ints =>
+          { value => $self->server_port, tstamp => \"current_timestamp" },
+        { key => 'port', value => -2 }
+    );
+    return $r->sth->rows;    # amount of updated rows (0 or 1)
 }
 
-
-sub _read_event {
-  my ($self, $idx) = @_;
-  my $fname = _get_buffers_path($self, $idx);
-  open my $rev, '<', $fname or die "Couldn't open event file: $!";
-  binmode $rev;
-  flock($rev, LOCK_SH) or die "Couldn't lock $fname: $!";
-  my $bytes = do { local $/; <$rev> };
-  close($rev) or die "Couldn't close $fname: $!";
-  $self->{dec} //= Sereal::Decoder->new;
-  my $res = &sereal_decode_with_object($self->{dec}, $bytes);
-  $self->emit(error => "Overflow trying to get event $idx")
-    unless $res->{i} == $idx;
-  return $res;
+# atomically looks for key 'port' on table __mb_global_ints whith value equals to $self->server_port,
+# changing it to <0>
+# otherwise nothing happens
+# allways return $self
+# the <0> value should allow other servers lock it and to start running
+sub _cleanup {
+    my $self = shift;
+    return $self unless $self->server_port;
+    my $db = $self->sqlite->db;
+    my $r  = $db->update(
+        __mb_global_ints => { value => 0 },
+        { key => 'port', value => $self->server_port }
+    );
+    return $self unless $r->sth->rows;    # amount of updated rows (0 or 1)
+    $self->server_port(undef);
+    Mojo::IOLoop->remove( $self->{_server_id} );
+    Mojo::IOLoop->remove( $self->{_purger_id} );
+    return $self;
 }
 
+has get_broker_port_timeout   => sub { 10 };
+has client_connection_timeout => sub { 5 };
 
-sub _ikeys {
-  my $self = shift;
-  $self->_get_vars_path('dummy')
-    unless $self->{varsdir};    # initializes $self->{varsdir}
-  return $self->{varsdir}->list->map('basename')->to_array;
+# time between last event checked and new pool on local events table
+has pool_time => sub { .25 };
+has [qw/sender_counter receiver_counter/];
+
+# atomically looks for key 'port' on table __mb_global_ints whith a value of 0,
+# changing to -1 and returning true (1)
+# otherwise nothing happens and returns false (0)
+# the -1 value should prevent other clients from taken the lock, but would
+# not prevent servers from doing so
+sub _check_and_lock {
+    my $self = shift;
+    my $db   = $self->sqlite->db;
+    my $r    = $db->update(
+        __mb_global_ints => { value => -1, tstamp => \"current_timestamp" },
+        { key => 'port', value => 0 }
+    );
+    return $r->sth->rows;    # amount of updated rows (0 or 1)
 }
 
-
-sub istash {
-  my ($self, $key, @set_list) = @_;
-  my (@val_list, $cb, $has_to_read, $has_to_write);
-  $cb           = $set_list[0] if ref $set_list[0] eq 'CODE';
-  $has_to_write = 1            if @set_list;
-  undef @set_list if $cb;
-  $has_to_read = !@set_list;
-
-  unless (exists $self->{catched_vars}->{$key}) {
-    my $file = $self->_get_vars_path($key);
-    open(my $sf, '>', $self->{vars_semaphore})
-      or die "Couldn't open $self->{vars_semaphore} for write: $!";
-    flock($sf, LOCK_EX) or die "Couldn't lock $self->{vars_semaphore}: $!";
-    unless (-f $file) {
-      open my $tch, '>', $file or die "Couldn't touch $file: $!";
-      close($tch) or die "Couldn't close $file: $!";
+sub get_broker_port {
+    my $self  = shift;
+    my $db    = $self->sqlite->db;
+    my $etime = time + $self->get_broker_port_timeout;
+    my $broker_port;
+    while ( time < $etime ) {
+        $broker_port =
+          $db->select( __mb_global_ints => ['value'], { key => 'port' } )
+          ->hashes->first->{value};
+        last if $broker_port > 0;
+        my $id = Mojo::IOLoop->timer( 0.05 => sub { } );
+        Mojo::IOLoop->one_tick;    # be nice with this process ioloop
+        Mojo::IOLoop->remove($id);
+        sleep .05;                 # be nice with other processes
     }
-    close($sf) or die "Couldn't close $self->{vars_semaphore}: $!";
-    $self->{catched_vars}->{$key} = $file;
-  }
-  my $fname = $self->{catched_vars}->{$key};            # path to file
-  my $lock_flags = $has_to_write ? LOCK_EX : LOCK_SH;
-  my $old_length;
-  open my $fh, '+<', $fname or die "Couldn't open $fname: $!";
-  binmode $fh;
-  flock($fh, $lock_flags) or die "Couldn't lock $fname: $!";
-  if ($has_to_read) {
-    my $slurped_file = do { local $/; <$fh> };
-    if ($old_length = length $slurped_file) {
-      my ($type, $val) = unpack('a1a*', $slurped_file);
-      if ($type eq '=') {
-        @val_list = ($val);
-      }
-      elsif ($type eq 'U') {
-        @val_list = decode('UTF-8', $val);
-      }
-      elsif ($type eq ':') {
-        $self->{dec} //= Sereal::Decoder->new;
-        @val_list = @{&sereal_decode_with_object($self->{dec}, $val)};
-      }
-      else {
-        die "Unreconized file content: $type$val";
-      }
-    }    # else keeps @val_list as an empty array
-  }
-  @set_list = $cb->(@val_list) if $cb;
-  if ($has_to_write) {
-    my $to_print;
-    if (@set_list == 1 && defined $set_list[0]) {
-      my $val = $set_list[0];
-      my ($type, $enc_val);
-      if (utf8::is_utf8($val)) { $type = 'U'; $enc_val = encode 'UTF-8', $val }
-      else                     { $type = '='; $enc_val = $val }
-      $to_print = pack 'a1a*', $type, $enc_val;
+    $self->{broker_port} = $broker_port > 0 ? $broker_port : undef;
+    return $self;
+}
+
+sub _get_last_ievents_id {
+    my $self     = shift;
+    my $last_row = $self->sqlite->db->select(
+        sqlite_sequence => 'seq',
+        { name => '__mb_ievents' }
+    )->hashes->first // { seq => 0 };
+    $self->{_lieid} //= $last_row->{seq};
+
+    # say STDERR "Leyo last id en tabla: " . $last_row->{seq};
+    return $self;
+}
+
+sub _write_ievent {
+    my $self = shift;
+    return $self->sqlite->db->query(
+'insert into __mb_ievents (target, origin, event, args) values (?,?,?,?)',
+        shift, $self->{_uid}, shift, { json => [@_] }
+    )->last_insert_id;
+}
+
+sub _generate_base_uid {
+    my $self = shift;
+    if ( !$self->{_uid} ) {
+        my $db = $self->sqlite->db;
+        my $tx = $db->begin('exclusive');
+        $self->{_uid} =
+          $db->select( __mb_global_ints => ['value'], { key => 'uniq' } )
+          ->hash->{value};
+        $db->update(
+            __mb_global_ints => { value => $self->{_uid} + 1 },
+            { key => 'uniq' }
+        );
+        $tx->commit;
     }
-    elsif (@set_list >= 1) {
-      $self->{enc} //= Sereal::Encoder->new;
-      $to_print = pack 'a1a*', ':',
-        &sereal_encode_with_object($self->{enc}, \@set_list);
+    return $self;
+}
+
+sub read_ievents {
+    my $self = shift;
+    $self->sqlite->db->query(
+'select id, target, event, args from __mb_ievents where id > ? and target in (?,?) and origin <> ? order by id',
+        $self->{_lieid},
+        $self->{_uid},
+        0,
+        $self->{_uid}
+    )->expand( json => 'args' )->hashes->each(
+        sub {
+            my $e = shift;
+            $self->emit( $e->{event}, @{ $e->{args} } )
+              if $self->{events}{ $e->{event} };
+            $self->{receiver_counter}++;
+            $self->{_lieid} = $e->{id};
+        }
+    );
+    Mojo::IOLoop->timer( $self->pool_time => sub { $self->_read_ievent } );
+}
+
+
+sub iemit {
+    my ( $self, $event ) = ( shift, shift );
+    my @args = @_;
+    my $dest = 0;    # broadcast to all connections
+
+    my ( $local_emit, $remote_emit );
+    if ( $event =~ /^__(\d+)_\d+$/ ) {    # unique send
+        $dest        = $1;
+        $local_emit  = $self->{_uid} eq $dest;
+        $remote_emit = !$local_emit;
     }
-    else {    # set_list is an empty array
-      $to_print = '';
+    else {
+        $local_emit = $remote_emit = 1;
     }
 
-    seek $fh, 0, 0;
-    print $fh ($to_print);
-    my $new_length = length($to_print);
-    truncate $fh, $new_length
-      if !defined $old_length || $old_length > $new_length;
-  }
+    # CAVEAT $self->{events} hash is not docummented in Mojo::EE
+    $self->emit( $event, @args ) if $local_emit && $self->{events}{$event};
+    if ($remote_emit) {
+        $self->_write_ievent( $dest => $event => @args );
+        my $nc = $self->{_uid};
 
-  close($fh) or die "Couldn't close $fname: $!";
-  my @ret_val = $has_to_write ? @set_list : @val_list;
-  return wantarray ? @ret_val : $ret_val[-1];
+        # say STDERR "client $nc enviara $dest S";
+        $self->{_stream}->write("$dest S\n");
+        $self->{sender_counter}++;
+    }
+    return $self;
+}
+
+sub unique {
+    my $self = shift;
+    return '__' . $self->{_uid} . '_' . ++$self->{_unique_count};
 }
 
 
 sub new {
-  return shift->SUPER::new(@_)->_init();
-}
+    my $self = shift->SUPER::new(@_);
+    $self->sqlite->auto_migrate(1)->migrations->name('minibroker')
+      ->from_string(
+        qq{-- 1 up
+create table if not exists __mb_global_ints (
+    key text not null primary key,
+    value integer,
+    tstamp text not null default current_timestamp
+);
+insert into __mb_global_ints (key, value) VALUES ('port', 0), ('uniq', 1);
+create table if not exists __mb_ievents (
+  id integer primary key autoincrement,
+  target integer not null,
+  origin integer not null,
+  event text not null,
+  args text not null,
+  created text not null default current_timestamp
+)
 
-sub unique {
-  my $self = shift;
-  return '__' . $self->{_lport} . '_' . ++$self->{unique_count};
-}
+-- 1 down
+drop table if exists __mb_ievents;
+drop table if exists __mb_global_ints;}
+      );
 
-sub iemit {
-  my ($self, $event) = (shift, shift);
-  my @args      = @_;
-  my $unique_id = '';
+  # check for client or server mode
+    $self->{_purger_id} = Mojo::IOLoop->recurring(
+        $self->purge_interval => sub { $self->purge_events; } );
+    $self->_store_and_unlock or die "Couldn't store new server port in db";
 
-  my ($local_emit, $remote_emit);
-  if ($event =~ /^__(\d+)_\d+$/) {    # unique send
-    my $u = $1;
-    $local_emit  = $self->{_client} eq $u;
-    $remote_emit = !$local_emit;
-    $unique_id   = $u . ':';
-  }
-  else {
-    $local_emit = $remote_emit = 1;
-  }
 
-  # CAVEAT $self->{events} hash is not docummented in Mojo::EE
-  $self->emit($event, @args) if $local_emit && $self->{events}{$event};
-
-  $self->{_client}->write(
-    $unique_id . $self->_write_event($event => @args) . "\n" => sub {
-      $self->{sender_counter}++;
-    }
-  ) if $remote_emit;
-
-  return $self;
+    return $self;
 }
 
 
-sub _init {
-  my ($self) = @_;
-  my $broker_port = -2;
-  while ($broker_port < 0) {
-    $broker_port = $self->istash(
-      __broker => sub {
-        my $p = shift;
-        if    (!defined $p) { $p = -1 }
-        elsif ($p == -1)    { $p = -2 }
-        return $p;
-      }
-    );
-    $self->_broker_server
-      if $broker_port == -1;    # only one process will get this
-    $self->_broker_client($broker_port)
-      if $broker_port > 0;      # other processes eventually will get this
-    sleep .25;                  # be nice to other processes
-  }
-  return $self;
-}
 
-sub _broker_server {
-  my ($self) = @_;
-  die "Can't fork: $!" unless defined(my $pid = fork);
-  if (!$pid) {
-    POSIX::setsid() or die "Can't start a new session: $!";
-
-    # define broker msg server
-    die "Can't fork: $!" unless defined(my $pid2 = fork);
-    POSIX::_exit(0) if $pid2;
-    my $id = Mojo::IOLoop->server(
-      {address => '127.0.0.1'} => sub {
-        my ($loop, $stream, $id) = @_;
-        $stream->timeout(0);
-        my $rport = $stream->handle->peerport;
-        $self->{_conns}{$rport} = $stream;
-        my $pndg = '';
-        $stream->on(
-          read => sub {
-            my ($stream, $bytes) = @_;
-            return unless defined $bytes;
-            my @msgs = split /\n/, $pndg . $bytes, -1;    # keep last separator
-            $pndg = pop @msgs // '';
-            for my $msg (@msgs) {
-              next unless $msg && $msg =~ /(?:(\d+):)?(\d+)$/;
-              my ($unique, $idx) = ($1, $2);
-              if (defined $unique) {
-                $self->{_conns}{$unique}->write("$idx\n")
-                  if $self->{_conns}{$unique};
-              }
-              else {
-                for my $p (keys %{$self->{_conns}}) {
-                  $self->{_conns}{$p}->write("$idx\n")
-                    unless $p eq $rport;                  # skip the emitter
-                }
-              }
-            }
-          }
-        );
-        $stream->on(
-          close => sub {
-            delete $self->{_conns}{$rport};
-            my $left = join ':', keys %{$self->{_conns}};
-
-            say STDERR "$$: recibio close para puerto $rport, quedan $left";
-            $loop->stop
-              unless keys %{$self->{_conns}};   # keep running if has connectons
-          }
-        );
-        $stream->on(
-          error => sub {
-            delete $self->{_conns}{$rport};
-            $loop->stop
-              unless keys %{$self->{_conns}};   # keep running if has connectons
-          }
-        );
-      }
-    );
-
-    $self->{server_port} = Mojo::IOLoop->acceptor($id)->port;
-    $self->istash(__broker => $self->{server_port});
-    Mojo::IOLoop->start;
-    $self->istash(__broker => undef);           #
-    POSIX::_exit(0);
-  }
-  $self->{_isparent} = 1;
-  return $self;                                 # parent
-}
-
-sub _broker_client {
-  my ($self, $port) = @_;
-  my $tid = Mojo::IOLoop->timer(
-    10 => sub {
-      my $loop = shift;
-      $self->istash(__broker => undef);         # too bad, server not working
-      die "Mojo::Iutils client can't connect to broker";
-    }
-  );
-  Mojo::IOLoop->client(
-    {address => '127.0.0.1', port => $port} => sub {
-      my ($loop, $err, $stream) = @_;
-      if ($stream) {
-        my $pndg = '';                          # pending data
-        $loop->remove($tid);                    # no timeout
-        $stream->timeout(0);                    # permanent
-        $stream->on(
-          read => sub {
-            my ($stream, $bytes) = @_;
-            return unless defined $bytes;
-            my @idxs = split /\n/, $pndg . $bytes, -1;    # keep last separator
-            $pndg = pop @idxs // '';
-            for my $idx (@idxs) {
-
-              # say STDERR "Cliente recibio idx $idx";
-              my $res   = $self->_read_event($idx);
-              my $event = $res->{e};
-              my @args  = @{$res->{a}};
-
-              # CAVEAT $self->{events} hash is not docummented in Mojo::EE
-              $self->emit($event, @args) if $self->{events}{$event};
-              $self->{receiver_counter}++;
-
-              # say STDERR "Recibio evento $event";
-            }
-          }
-        );
-        $stream->on(
-          close => sub {
-            delete $self->{_client};
-          }
-        );
-        my $aux_stream = $stream;
-        $self->{_client} = $aux_stream;                 # for interprocess emits
-        $self->{_lport}  = $stream->handle->sockport;   # as a client id
-        weaken($self->{_client});
-      }
-    }
-  );
-
-  # my $z;
-  while (!$self->{_client}) {
-    Mojo::IOLoop->timer(0.05 => sub { shift->stop_gracefully });
-    Mojo::IOLoop->start;
-
-    # say STDERR "Reintento numero " . ++$z;
-  }
-
-  # say STDERR "Cliente se conecto con puerto " . $self->{_lport};
-  return $self;
-}
 
 sub DESTROY {
-  my $self = shift;
-  say "Llamo a DESTROY en server" if defined $self->{server_port};
-  say "Llamo a DESTROY en client" if defined $self->{_client};
-  $self->istash(__broker => undef) if defined $self->{server_port};
-  $self->{_client}->close if $self->{_client};
+    my $self = shift;
+    return () if Mojo::Util::_global_destruction();
+
+    # say STDERR "Al destroy de minibroker si lo llama";
+    $self->client->DESTROY if delete $self->{_has_client};
+    $self->server->DESTROY if delete $self->{_has_server};
 }
 1;
-__END__
 
 =encoding utf-8
 
@@ -553,4 +475,3 @@ it under the same terms as Perl itself.
 Daniel Mantovani E<lt>dmanto@cpan.orgE<gt>
 
 =cut
-

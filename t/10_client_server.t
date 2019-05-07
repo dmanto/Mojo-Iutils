@@ -1,0 +1,88 @@
+use strict;
+use Test::More 0.98;
+use Mojo::Base 'Mojo::EventEmitter';
+use Mojo::Util 'monkey_patch';
+use Mojo::Iutils::Server;
+use Mojo::Iutils::Client;
+
+has 'broker_id';
+my @events;
+
+sub ievents {
+  my $self = shift;
+  push @events, $self->broker_id;
+}
+
+# subclass overriding
+monkey_patch 'Mojo::Iutils::Client', read_ievents => \&ievents;
+monkey_patch 'Mojo::Iutils::Server', read_ievents => \&ievents;
+
+my $s1 = Mojo::Iutils::Server->new(broker_id => 1);
+
+$s1->start;
+ok defined $s1->port, "server port defined";
+my $c2 = Mojo::Iutils::Client->new(broker_id => 2, port => $s1->port);
+my $c3 = Mojo::Iutils::Client->new(broker_id => 3, port => $s1->port);
+my $c4 = Mojo::Iutils::Client->new(broker_id => 4, port => $s1->port);
+$c2->connect;
+$c3->connect;
+$c4->connect;
+
+my $end = 0;
+my $tid = Mojo::IOLoop->timer(0.1 => sub { $end = 1; shift->stop });
+Mojo::IOLoop->one_tick while !($c4->connected || $end);
+Mojo::IOLoop->remove($tid);
+
+ok $c2->connected, "Client 2 connected";
+ok $c3->connected, "Client 3 connected";
+ok $c4->connected, "Client 4 connected";
+
+is keys %{$s1->{_conns}}, 3, "3 clients connected";
+undef $c4;    # or go out of context, should close the connection immediatelly
+
+$end = 0;
+$tid = Mojo::IOLoop->timer(0.1 => sub { $end = 1; shift->stop });
+Mojo::IOLoop->one_tick while !(keys %{$s1->{_conns}} == 2 || $end);
+Mojo::IOLoop->remove($tid);
+
+is keys %{$s1->{_conns}}, 2, "client 4 immediatelly disconnected";
+
+$c2->sync_remotes(undef, 0);
+
+$end = 0;
+$tid = Mojo::IOLoop->timer(0.1 => sub { $end = 1; shift->stop });
+Mojo::IOLoop->one_tick while !(@events >= 2 || $end);
+Mojo::IOLoop->remove($tid);
+ok @events == 2, "s1 & c3 ievents received";
+is_deeply [sort @events], [1, 3], "right ievents received for c2 emits";
+
+@events = ();
+$c3->sync_remotes(undef, 0);
+$end = 0;
+$tid = Mojo::IOLoop->timer(0.1 => sub { $end = 1; shift->stop });
+Mojo::IOLoop->one_tick while !(@events >= 2 || $end);
+Mojo::IOLoop->remove($tid);
+ok @events == 2, "s1 & c2 ievents received";
+is_deeply [sort @events], [1, 2], "right ievents received for c3 emits";
+
+@events = ();
+$s1->sync_remotes(1, 0);
+$end = 0;
+$tid = Mojo::IOLoop->timer(0.1 => sub { $end = 1; shift->stop });
+Mojo::IOLoop->one_tick while !(@events >= 2 || $end);
+Mojo::IOLoop->remove($tid);
+ok @events == 2, "c2 & c3 ievents received";
+is_deeply [sort @events], [2, 3], "right ievents received for s1 emits";
+
+# server $s1 undef so client connections should be immediatelly closed
+undef $s1;
+$end = 0;
+$tid = Mojo::IOLoop->timer(.1 => sub { $end = 1; shift->stop });
+
+Mojo::IOLoop->one_tick while (($c2->connected || $c3->connected) && !$end);
+Mojo::IOLoop->remove($tid);
+
+ok !$c2->connected, 'c2 disconnected';
+ok !$c3->connected, 'c3 disconnected';
+
+done_testing;
