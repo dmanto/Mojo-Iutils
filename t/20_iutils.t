@@ -4,33 +4,33 @@ BEGIN {
 use utf8;
 use Test2::IPC;
 use Test2::V0;
-use Mojo::Iutils::Minibroker;
+use Mojo::Iutils;
 use Mojo::File 'path';
 use File::HomeDir;
 use File::Spec::Functions 'tmpdir';
 
 delete $ENV{MOJO_MODE};
-delete $ENV{MOJO_MINIBROKER_NAME};
-my $m = Mojo::Iutils::Minibroker->new;
+delete $ENV{MOJO_IUTILS_NAME};
+my $m = Mojo::Iutils->new;
 is $m->db_file,
-  path(File::HomeDir->my_home, '.minibroker', 'noname', 'development.db')
+  path(File::HomeDir->my_home, '.iutils', 'noname', 'development.db')
   ->to_string, 'correct home db_file, no mode';
 
-$m = Mojo::Iutils::Minibroker->new(mode => 'test', name => 'mojotest');
+$m = Mojo::Iutils->new(mode => 'test', name => 'mojotest');
 is $m->db_file,
-  path(File::HomeDir->my_home, '.minibroker', 'mojotest', 'test.db')->to_string,
+  path(File::HomeDir->my_home, '.iutils', 'mojotest', 'test.db')->to_string,
   'correct home db_file, no MOJO_MODE';
 $ENV{MOJO_MODE} = 'test';
-$m = Mojo::Iutils::Minibroker->new;
+$m = Mojo::Iutils->new;
 is $m->db_file,
-  path(File::HomeDir->my_home, '.minibroker', 'noname', 'test.db')->to_string,
+  path(File::HomeDir->my_home, '.iutils', 'noname', 'test.db')->to_string,
   'correct home db_file, with MOJO_MODE set';
 
-$ENV{MOJO_MINIBROKER_NAME} = 'somename';
-$m = Mojo::Iutils::Minibroker->new;
+$ENV{MOJO_IUTILS_NAME} = 'somename';
+$m = Mojo::Iutils->new;
 is $m->db_file,
-  path(File::HomeDir->my_home, '.minibroker', 'somename', 'test.db')->to_string,
-  'correct home db_file, with MOJO_MODE and MOJO_MINIBROKER_NAME set';
+  path(File::HomeDir->my_home, '.iutils', 'somename', 'test.db')->to_string,
+  'correct home db_file, with MOJO_MODE and MOJO_IUTILS_NAME set';
 
 # lock scheme for server after client
 my $cl  = $m->client;

@@ -7,6 +7,7 @@ use Mojo::Iutils::Client;
 
 has 'broker_id';
 my @events;
+my $disconnected;
 
 sub ievents {
   my $self = shift;
@@ -18,12 +19,13 @@ monkey_patch 'Mojo::Iutils::Client', read_ievents => \&ievents;
 monkey_patch 'Mojo::Iutils::Server', read_ievents => \&ievents;
 
 my $s1 = Mojo::Iutils::Server->new(broker_id => 1);
-
 $s1->start;
 ok defined $s1->port, "server port defined";
+$s1->on(disconnected => sub { $disconnected = 1 });
 my $c2 = Mojo::Iutils::Client->new(broker_id => 2, port => $s1->port);
 my $c3 = Mojo::Iutils::Client->new(broker_id => 3, port => $s1->port);
 my $c4 = Mojo::Iutils::Client->new(broker_id => 4, port => $s1->port);
+$_->on(disconnected => sub { $disconnected++ }) for ($c2, $c3, $c4);
 $c2->connect;
 $c3->connect;
 $c4->connect;
@@ -39,6 +41,7 @@ ok $c4->connected, "Client 4 connected";
 
 is keys %{$s1->{_conns}}, 3, "3 clients connected";
 undef $c4;    # or go out of context, should close the connection immediatelly
+is $disconnected, undef, 'no disconnect events on own destroy';
 
 $end = 0;
 $tid = Mojo::IOLoop->timer(0.1 => sub { $end = 1; shift->stop });
@@ -75,6 +78,7 @@ ok @events == 2, "c2 & c3 ievents received";
 is_deeply [sort @events], [2, 3], "right ievents received for s1 emits";
 
 # server $s1 undef so client connections should be immediatelly closed
+is $disconnected, undef, 'server not disconnected yet';
 undef $s1;
 $end = 0;
 $tid = Mojo::IOLoop->timer(.1 => sub { $end = 1; shift->stop });
@@ -84,5 +88,6 @@ Mojo::IOLoop->remove($tid);
 
 ok !$c2->connected, 'c2 disconnected';
 ok !$c3->connected, 'c3 disconnected';
+is $disconnected, 2, 'client disconnected events received';
 
 done_testing;

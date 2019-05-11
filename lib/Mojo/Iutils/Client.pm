@@ -15,7 +15,6 @@ sub read_ievents { croak 'Method "read_ievents" not implemented by parent' }
 
 sub connect {
     my ( $self, $port ) = @_;
-    weaken $self;
     return $self if $self->connected;    # no reconnections allowed
     $port //= $self->port;
     return $self
@@ -49,16 +48,18 @@ sub connect {
                     close => sub {
 
                         # say STDERR "stream closed";
-                        $self->connected(0);
                         delete $self->{_stream};
+                        $self->emit('disconnected') if $self->connected;
+                        $self->connected(0);
                     }
                 );
                 $stream->on(
                     error => sub {
 
                         # say STDERR "stream error";
-                        $self->connected(0);
                         delete $self->{_stream};
+                        $self->emit('disconnected') if $self->connected;
+                        $self->connected(0);
                     }
                 );
 
@@ -72,6 +73,7 @@ sub connect {
         }
     );
 
+    weaken $self;
     return $self;
 }
 
@@ -82,6 +84,7 @@ sub sync_remotes {
 
 sub _cleanup {
     my $self = shift;
+    $self->connected(0);    # no disconnected events on destroy
     $self->{_stream}->close if $self->{_stream};
 }
 

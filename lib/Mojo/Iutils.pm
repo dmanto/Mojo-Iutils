@@ -7,7 +7,7 @@ use File::Spec::Functions 'tmpdir';
 use File::HomeDir;
 use Mojo::IOLoop;
 use Mojo::File 'path';
-use Mojo::Util;
+use Mojo::Util qw/steady_time/;
 use Mojo::SQLite;
 use Mojo::Iutils::Client;
 use Mojo::Iutils::Server;
@@ -15,8 +15,8 @@ use Mojo::Iutils::Server;
 # use Mojo::Loader qw/data_section/;
 use Data::Dumper;
 use constant {
-    MOJO_IUTILS_SLBROKER_DIR => '.slbroker',
-    DEBUG          => $ENV{MOJO_IUTILS_DEBUG} || 0,
+    MOJO_IUTILS_DIR => '.iutils',
+    DEBUG           => $ENV{MOJO_IUTILS_DEBUG} || 0,
 };
 our $VERSION = '0.09';
 
@@ -26,10 +26,10 @@ has db_file => sub {
     $p =
       $self->use_temp_dir
       ? path( tmpdir,
-        MOJO_IUTILS_SLBROKER_DIR . '_'
+        MOJO_IUTILS_DIR . '_'
           . ( eval { scalar getpwuid($<) } || getlogin || 'nobody' ) )
-      : path( File::HomeDir->my_home, MOJO_IUTILS_SLBROKER_DIR );
-    $p = path( $self->base_dir, MOJO_IUTILS_SLBROKER_DIR ) if $self->base_dir;
+      : path( File::HomeDir->my_home, MOJO_IUTILS_DIR );
+    $p = path( $self->base_dir, MOJO_IUTILS_DIR ) if $self->base_dir;
     $p = $p->child( $self->name );
     $p->make_path;
     $p = $p->child( $self->mode . '.db' );
@@ -38,34 +38,24 @@ has db_file => sub {
 
 has client => sub {
     my $self = shift;
-    $self->{_has_client} = 1;
-
-    # state $client =
-    Mojo::Iutils::Minibroker::Client->new( sqlite => $self->sqlite, @_ );
+    Mojo::Iutils::Client->new(
+        broker_id => $self->{_broker_id},
+        port      => $self->{_server_port}
+    );
 };
 has server => sub {
     my $self = shift;
-    $self->{_has_server} = 1;
-
-    # state $server =
-    Mojo::Iutils::Minibroker::Server->new( sqlite => $self->sqlite, @_ );
+    Mojo::Iutils::Server->new( broker_id => $self->{_broker_id} );
 };
 has sqlite => sub { Mojo::SQLite->new( 'sqlite:' . shift->db_file ) };
 has mode   => sub { $ENV{MOJO_MODE} || $ENV{PLACK_ENV} || 'development' };
-has name   => sub { $ENV{MOJO_MINIBROKER_NAME} || 'noname' };
-has [qw(base_dir use_temp_dir sender_counter receiver_counter)];
-
+has name   => sub { $ENV{MOJO_IUTILS_NAME} || 'noname' };
+has pool_interval   => sub { 0.25 };
+has pool_duration   => sub { 2 };
 has purge_threshold => sub { 600 };    # will purge
 has purge_interval =>
   sub { 10 };    # amount of seconds between purges on table iemits
-
-sub purge_events {
-    my $self = shift;
-    $self->sqlite->db->query(
-        "delete from __mb_ievents where created <= datetime('now', ?)",
-        -$self->purge_threshold . " seconds" );
-    return $self;
-}
+has [qw(base_dir use_temp_dir sender_counter receiver_counter)];
 
 # atomically looks for key 'port' on table __mb_global_ints whith values 0 or -1,
 # changing to -2 and returning true (1)
@@ -119,10 +109,6 @@ sub _cleanup {
 has get_broker_port_timeout   => sub { 10 };
 has client_connection_timeout => sub { 5 };
 
-# time between last event checked and new pool on local events table
-has pool_time => sub { .25 };
-has [qw/sender_counter receiver_counter/];
-
 # atomically looks for key 'port' on table __mb_global_ints whith a value of 0,
 # changing to -1 and returning true (1)
 # otherwise nothing happens and returns false (0)
@@ -173,20 +159,20 @@ sub _write_ievent {
     my $self = shift;
     return $self->sqlite->db->query(
 'insert into __mb_ievents (target, origin, event, args) values (?,?,?,?)',
-        shift, $self->{_uid}, shift, { json => [@_] }
+        shift, $self->{_broker_id}, shift, { json => [@_] }
     )->last_insert_id;
 }
 
-sub _generate_base_uid {
+sub _generate_broker_id {
     my $self = shift;
-    if ( !$self->{_uid} ) {
+    if ( !$self->{_broker_id} ) {
         my $db = $self->sqlite->db;
         my $tx = $db->begin('exclusive');
-        $self->{_uid} =
+        $self->{_broker_id} =
           $db->select( __mb_global_ints => ['value'], { key => 'uniq' } )
           ->hash->{value};
         $db->update(
-            __mb_global_ints => { value => $self->{_uid} + 1 },
+            __mb_global_ints => { value => $self->{_broker_id} + 1 },
             { key => 'uniq' }
         );
         $tx->commit;
@@ -196,12 +182,14 @@ sub _generate_base_uid {
 
 sub read_ievents {
     my $self = shift;
+    weaken $self;
+    say STDERR "run read_ievents";
     $self->sqlite->db->query(
 'select id, target, event, args from __mb_ievents where id > ? and target in (?,?) and origin <> ? order by id',
         $self->{_lieid},
-        $self->{_uid},
+        $self->{_broker_id},
         0,
-        $self->{_uid}
+        $self->{_broker_id}
     )->expand( json => 'args' )->hashes->each(
         sub {
             my $e = shift;
@@ -211,9 +199,49 @@ sub read_ievents {
             $self->{_lieid} = $e->{id};
         }
     );
-    Mojo::IOLoop->timer( $self->pool_time => sub { $self->_read_ievent } );
 }
 
+sub _pool {
+    my $self = shift;
+    weaken $self;
+    $self->{_end_pool} = steady_time + $self->pool_duration;
+    my $read_small_loop;
+    $read_small_loop = sub {
+        $self->read_ievents;    # actualize events
+        Mojo::IOLoop->remove( $self->{_pool_id} ) if $self->{_pool_id};
+        $self->{_pool_id} =
+          Mojo::IOLoop->timer( $self->pool_interval => $read_small_loop )
+          if $self->{_end_pool} > steady_time;
+    };
+    $read_small_loop->();
+    return $self;
+}
+
+sub purge_events {
+    my $self = shift;
+
+    $self->sqlite->db->query(
+        "delete from __mb_ievents where created <= datetime('now', ?)",
+        -$self->purge_threshold . " seconds" );
+    say STDERR "Llamo a purge_events";
+    return $self;
+}
+
+sub _purge_events_pool {
+    my $self = shift;
+    return $self if $self->{_purge_id};
+    weaken $self;
+    my $purge_small_loop;
+    $purge_small_loop = sub {
+        $self->purge_events;
+        $self->{_purge_id} =
+          Mojo::IOLoop->timer( $self->purge_interval => $purge_small_loop );
+    };
+
+    # Mojo::IOLoop->next_tick($purge_small_loop);
+    $purge_small_loop->();
+    return $self;
+}
 
 sub iemit {
     my ( $self, $event ) = ( shift, shift );
@@ -223,7 +251,7 @@ sub iemit {
     my ( $local_emit, $remote_emit );
     if ( $event =~ /^__(\d+)_\d+$/ ) {    # unique send
         $dest        = $1;
-        $local_emit  = $self->{_uid} eq $dest;
+        $local_emit  = $self->{_broker_id} eq $dest;
         $remote_emit = !$local_emit;
     }
     else {
@@ -234,7 +262,7 @@ sub iemit {
     $self->emit( $event, @args ) if $local_emit && $self->{events}{$event};
     if ($remote_emit) {
         $self->_write_ievent( $dest => $event => @args );
-        my $nc = $self->{_uid};
+        my $nc = $self->{_broker_id};
 
         # say STDERR "client $nc enviara $dest S";
         $self->{_stream}->write("$dest S\n");
@@ -245,9 +273,8 @@ sub iemit {
 
 sub unique {
     my $self = shift;
-    return '__' . $self->{_uid} . '_' . ++$self->{_unique_count};
+    return '__' . $self->{_broker_id} . '_' . ++$self->{_unique_count};
 }
-
 
 sub new {
     my $self = shift->SUPER::new(@_);
@@ -274,25 +301,30 @@ drop table if exists __mb_ievents;
 drop table if exists __mb_global_ints;}
       );
 
-  # check for client or server mode
-    $self->{_purger_id} = Mojo::IOLoop->recurring(
-        $self->purge_interval => sub { $self->purge_events; } );
-    $self->_store_and_unlock or die "Couldn't store new server port in db";
+    # generate broker id
+    $self->_generate_broker_id;
 
+    # check for client or server mode
+    # set purge interval
+    $self->_purge_events_pool;
+
+    # $self->_store_and_unlock or die "Couldn't store new server port in db";
 
     return $self;
 }
 
-
-
-
 sub DESTROY {
     my $self = shift;
     return () if Mojo::Util::_global_destruction();
-
-    # say STDERR "Al destroy de minibroker si lo llama";
-    $self->client->DESTROY if delete $self->{_has_client};
-    $self->server->DESTROY if delete $self->{_has_server};
+    if ( $self->{_purge_id} ) {
+        say( "removera purge_id: ", $self->{_purge_id} );
+        Mojo::IOLoop->remove( $self->{_purge_id} );
+    }
+    if ( $self->{_pool_id} ) {
+        say( "removera pool_id: ", $self->{_pool_id} );
+        Mojo::IOLoop->remove( $self->{_pool_id} );
+    }
+    say "Llamo al DESTROY de Mojo::Iutils";
 }
 1;
 

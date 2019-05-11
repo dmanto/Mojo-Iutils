@@ -18,29 +18,28 @@ has 'broker_id';
 #
 # <destination1>[:<destination2...:destinationN]<space char><command char>[<content>]<EOR char>
 #
-# server --> client
-#
-# <origin><space char><command char>[<content>]<EOR char>
-#
-# where:
 #   destination:  is the id number of the targetted remote client connection, as known by the server.
 #                 : char separates id numbers when more than one targeted client is needed
 #                 0 means all connected clients
 #
-#   origin:       is the id number of the originating client, as known by the server
-#
 #   space char:   space (0x20) char
 #
-#   command char: '?' asks for last activity of targeted clients. Server will return a string
-#                 in the format ?<client id number 1>:<last activity 1>: ... <EOR char>.
-#                 <last activity N> here is the epoch time in miliseconds from the last message
-#                 received by the server from that client.
-#                 <origin> will be '0' in this particular answer.
-#                 on any other command char, server will just resend command and content to
-#                 all indicated targets
-#                 '!' is an order to close <destination> connection
-#                 'S' (0x53 char) means Interprocess sincronization order. Client corresponding
+#   command char: 'S' (0x53 char) means Interprocess sincronization command. Client corresponding
 #                 to destination will need to syncronize against local events table
+#                 '@' (0x40 char) means rename command. Client corresponding
+#                 to destination will be known with the number indicated in <content>
+#
+# server --> client
+#
+# <command char><EOR char>
+#
+# where:
+#
+#   command char: 'S' (0x53 char) means Interprocess sincronization command. Client
+#                 receiving this command will syncronize against local events table
+#                 'A' (0x41 char) means rename acknowledged command. Client receiving
+#                 this command will consider itself as connected
+#
 
 sub read_ievents { croak 'Method "read_ievents" not implemented by parent' }
 
@@ -77,16 +76,11 @@ sub start {
                             $self->sync_remotes( $origin, $d );
                         }
                         elsif ( $cmd eq '@' ) {    # rename cmd
-                                # my $odd = 'Lista actual: '
-                                #   . join( ', ', keys %{ $self->{_conns} } );
-                                # say STDERR $odd;
                             $self->{_conns}{$content} =
                               $self->{_conns}{$origin};
                             delete $self->{_conns}{$origin};
                             $origin = $content;
                             $stream->write("A\n");    # acknowledges rename
-                             #  my $ndd = 'Nueva lista: ' . join(', ', keys %{$self->{_conns}});
-                             #  say STDERR $ndd;
                             next;
                         }    # besides that, ignore commands
                     }
@@ -137,6 +131,7 @@ sub sync_remotes {
 
 sub _cleanup {
     my $self = shift;
+    say "Llama server DESTROY";
     $self->{_conns}{$_} && $self->{_conns}{$_}->DESTROY
       for keys %{ $self->{_conns} };       # server stops
     Mojo::IOLoop->acceptor( $self->{_server_id} )->DESTROY
