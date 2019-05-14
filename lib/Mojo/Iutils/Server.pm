@@ -131,10 +131,11 @@ sub sync_remotes {
 
 sub _cleanup {
     my $self = shift;
-    say "Llama server DESTROY";
+
+    # say STDERR "Llama server DESTROY";
     $self->{_conns}{$_} && $self->{_conns}{$_}->DESTROY
       for keys %{ $self->{_conns} };       # server stops
-    Mojo::IOLoop->acceptor( $self->{_server_id} )->DESTROY
+    Mojo::IOLoop->remove( $self->{_server_id} )
       if $self->{_server_id};
 }
 

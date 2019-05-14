@@ -36,57 +36,32 @@ has db_file => sub {
     return $p->to_string;
 };
 
-has client => sub {
-    my $self = shift;
-    Mojo::Iutils::Client->new(
-        broker_id => $self->{_broker_id},
-        port      => $self->{_server_port}
-    );
-};
-has server => sub {
-    my $self = shift;
-    Mojo::Iutils::Server->new( broker_id => $self->{_broker_id} );
-};
 has sqlite => sub { Mojo::SQLite->new( 'sqlite:' . shift->db_file ) };
 has mode   => sub { $ENV{MOJO_MODE} || $ENV{PLACK_ENV} || 'development' };
 has name   => sub { $ENV{MOJO_IUTILS_NAME} || 'noname' };
-has pool_interval   => sub { 0.25 };
-has pool_duration   => sub { 2 };
-has purge_threshold => sub { 600 };    # will purge
-has purge_interval =>
-  sub { 10 };    # amount of seconds between purges on table iemits
+has pool_interval      => sub { 0.25 };
+has pool_duration      => sub { 2 };
+has purge_threshold    => sub { 600 };    # will purge older events
+has purge_interval     => sub { 10 };     # check purges on table iemits
+has connection_timeout => sub { 2 };      # refused connection
+has rename_timeout =>
+  sub { shift->connection_timeout + 2 };    # when server doesnt ack rename
+has integrity_interval => sub { 5 };        # server checks port ok
 has [qw(base_dir use_temp_dir sender_counter receiver_counter)];
 
-# atomically looks for key 'port' on table __mb_global_ints whith values 0 or -1,
-# changing to -2 and returning true (1)
-# otherwise nothing happens and returns false (0)
-# the -2 value should prevent other clients or servers from taken the lock
-sub _server_check_and_lock {
+sub client {
     my $self = shift;
-    my $db   = $self->sqlite->db;
-    my $r    = $db->update(
-        __mb_global_ints => { value => -2, tstamp => \"current_timestamp" },
-        { key => 'port', value => { -in => [ 0, -1 ] } }
-    );
-    return $r->sth->rows;    # amount of updated rows (0 or 1)
+    $self->{client} //= Mojo::Iutils::Client->new(@_);
+    return $self->{client};
 }
 
-# atomically looks for key 'port' on table __mb_global_ints whith value -2,
-# changing to <$self->server_port> and returning true (1)
-# otherwise nothing happens and returns false (0)
-# the <$self->server_port> value should prevent other servers from trying to start running
-sub _server_store_and_unlock {
+sub server {
     my $self = shift;
-    my $db   = $self->sqlite->db;
-    my $r    = $db->update(
-        __mb_global_ints =>
-          { value => $self->server_port, tstamp => \"current_timestamp" },
-        { key => 'port', value => -2 }
-    );
-    return $r->sth->rows;    # amount of updated rows (0 or 1)
+    $self->{server} //= Mojo::Iutils::Server->new(@_);
+    return $self->{server};
 }
 
-# atomically looks for key 'port' on table __mb_global_ints whith value equals to $self->server_port,
+# atomically looks for key 'port' on table __mb_global_ints whith value equals to $self->{_server_port},
 # changing it to <0>
 # otherwise nothing happens
 # allways return $self
@@ -106,15 +81,12 @@ sub _cleanup {
     return $self;
 }
 
-has get_broker_port_timeout   => sub { 10 };
-has client_connection_timeout => sub { 5 };
-
 # atomically looks for key 'port' on table __mb_global_ints whith a value of 0,
 # changing to -1 and returning true (1)
 # otherwise nothing happens and returns false (0)
-# the -1 value should prevent other clients from taken the lock, but would
-# not prevent servers from doing so
-sub _check_and_lock {
+# the -1 value should prevent other clients or potencial servers from taken the lock.
+#
+sub _check_n_get_server_lock {
     my $self = shift;
     my $db   = $self->sqlite->db;
     my $r    = $db->update(
@@ -124,23 +96,37 @@ sub _check_and_lock {
     return $r->sth->rows;    # amount of updated rows (0 or 1)
 }
 
-sub get_broker_port {
-    my $self  = shift;
-    my $db    = $self->sqlite->db;
-    my $etime = time + $self->get_broker_port_timeout;
-    my $broker_port;
-    while ( time < $etime ) {
-        $broker_port =
-          $db->select( __mb_global_ints => ['value'], { key => 'port' } )
-          ->hashes->first->{value};
-        last if $broker_port > 0;
-        my $id = Mojo::IOLoop->timer( 0.05 => sub { } );
-        Mojo::IOLoop->one_tick;    # be nice with this process ioloop
-        Mojo::IOLoop->remove($id);
-        sleep .05;                 # be nice with other processes
-    }
-    $self->{broker_port} = $broker_port > 0 ? $broker_port : undef;
-    return $self;
+# atomically looks for key 'port' on table __mb_global_ints whith a value of -1 (or less, but shouldn't happen),
+# but an old timestamp (older than 2 seconds)
+# setting value to -1 , updating the timestamp and returning true (1)
+# otherwise nothing happens and returns false (0)
+# the -1 value should prevent other clients or potencial servers from taken the lock.
+#
+sub _check_n_get_server_TO_lock {
+    my $self = shift;
+    my $db   = $self->sqlite->db;
+    my $r    = $db->update(
+        __mb_global_ints => { value => -1, tstamp => \"current_timestamp" },
+        {
+            key    => 'port',
+            value  => { '<', 0 },
+            tstamp => {
+                -not_between =>
+                  [ \"datetime('now', '-2 seconds')", \"datetime('now')" ]
+            }
+        }
+    );
+    return $r->sth->rows;    # amount of updated rows (0 or 1)
+}
+
+sub _check_n_get_server_port {
+    my $self = shift;
+    my $db   = $self->sqlite->db;
+    my $broker_port =
+      $db->select( __mb_global_ints => ['value'], { key => 'port' } )
+      ->hashes->first->{value} // 0;
+    $self->{_server_port} = $broker_port > 0 ? $broker_port : undef;
+    return !!$self->{_server_port};
 }
 
 sub _get_last_ievents_id {
@@ -219,7 +205,6 @@ sub _pool {
 
 sub purge_events {
     my $self = shift;
-
     $self->sqlite->db->query(
         "delete from __mb_ievents where created <= datetime('now', ?)",
         -$self->purge_threshold . " seconds" );
@@ -233,13 +218,133 @@ sub _purge_events_pool {
     weaken $self;
     my $purge_small_loop;
     $purge_small_loop = sub {
+        Mojo::IOLoop->remove( delete $self->{_purge_id} ) if $self->{_purge_id};
+        return unless $self->{server};    # this will stop the periodic purge
         $self->purge_events;
         $self->{_purge_id} =
           Mojo::IOLoop->timer( $self->purge_interval => $purge_small_loop );
     };
-
-    # Mojo::IOLoop->next_tick($purge_small_loop);
     $purge_small_loop->();
+    return $self;
+}
+
+sub _server_integrity_check {
+    my $self = shift;
+    weaken $self;
+    my $port = $self->{_server_port};
+
+    # first case is a problem, no server according the DB
+    return 0 unless $port && $port > 0;
+
+    # next is everything ok case
+    return 1 if $self->_check_n_get_server_port && $self->server->port == $port;
+
+    # here it is also a problem, there is another server running according to db
+    return 0;
+}
+
+sub _integrity_pool {
+    my $self = shift;
+    return $self if $self->{_integrity_id};
+    weaken $self;
+    my $integrity_small_loop;
+    $integrity_small_loop = sub {
+        Mojo::IOLoop->remove( delete $self->{_integrity_id} )
+          if $self->{_integrity_id};
+        return unless $self->{server};    # this will stop the periodic check
+        $self->_server_integrity_check || $self->_connect;
+        $self->{_integrity_id} =
+          Mojo::IOLoop->timer(
+            $self->integrity_interval => $integrity_small_loop );
+    };
+    $integrity_small_loop->();
+    return $self;
+}
+
+sub _connect {
+    my $self = shift;
+    weaken $self;
+    say STDERR "llamo a _connect";
+    my $db = $self->sqlite->db;
+    if ( $self->_check_n_get_server_port ) {
+        $self->client(
+            broker_id => $self->{_broker_id},
+            port      => $self->{_server_port}
+        )->connect->on( disconnect => sub { $self->_connect_pool } );
+        $self->client->on(
+            connection_timeout => sub {
+
+                # this is a problem. As a client, we were not able to
+                # connect to the specified port, so we assume that the server
+                # is not running
+                $db->update(
+                    __mb_global_ints => { value => 0 },
+                    { key => 'port' }
+                );
+
+                # and retry connection now (probably as a server)
+                $self->_connect_pool;
+            }
+        );
+        $self->client->on(
+            rename_timeout => sub {
+
+                # Similar to last case, but we don't get the acknowledge to
+                # the initial rename request.
+                $db->update(
+                    __mb_global_ints => { value => 0 },
+                    { key => 'port' }
+                );
+
+                # and retry connection now (probably as a server)
+                $self->_connect_pool;
+            }
+        );
+    }
+    elsif ($self->_check_n_get_server_lock
+        || $self->_check_n_get_server_TO_lock )
+    {
+        if ( my $port =
+            $self->server( broker_id => $self->{_broker_id} )->start->port )
+        {
+            # we are the server
+            $db->update(
+                __mb_global_ints => { value => $port },
+                { key => 'port' }
+            );
+            $self->_purge_events_pool;
+            $self->_server_integrity_check;
+        }
+        else {
+            # this is a problem. As a server, we were not able to
+            # start listening on a valid port, so we assume that we should retry
+            $db->update(
+                __mb_global_ints => { value => 0 },
+                { key => 'port' }
+            );
+
+            # and retry connection now (probably again as a server)
+            $self->_connect_pool;
+        }
+    }
+    $self->{_connection_wait} = .1;
+}
+
+sub _connect_pool {
+    my $self = shift;
+    weaken $self;
+    undef $self->{client};    # will DESTROY client if exists
+    undef $self->{server};    # will DESTROY server if exists
+    my $connect_small_loop;
+    $connect_small_loop = sub {
+        $self->_connect;
+        Mojo::IOLoop->remove( $self->{_connect_id} )
+          if $self->{_connect_id};
+        $self->{_connect_id} =
+          Mojo::IOLoop->timer(
+            $self->{_connection_wait} => $connect_small_loop );
+    };
+    $connect_small_loop->();
     return $self;
 }
 
@@ -303,13 +408,12 @@ drop table if exists __mb_global_ints;}
 
     # generate broker id
     $self->_generate_broker_id;
+    $self->_get_last_ievents_id;
 
     # check for client or server mode
     # set purge interval
-    $self->_purge_events_pool;
-
-    # $self->_store_and_unlock or die "Couldn't store new server port in db";
-
+    $self->{_connection_wait} = 0;
+    $self->_connect_pool;
     return $self;
 }
 

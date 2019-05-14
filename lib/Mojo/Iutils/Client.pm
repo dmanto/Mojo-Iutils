@@ -10,27 +10,36 @@ use Mojo::IOLoop;
 has 'port';
 has 'broker_id';
 has 'connected';
+has connection_timeout => sub { 2 };
+has rename_timeout     => sub { shift->connection_timeout + 1 };
 
 sub read_ievents { croak 'Method "read_ievents" not implemented by parent' }
 
 sub connect {
-    my ( $self, $port ) = @_;
-    return $self if $self->connected;    # no reconnections allowed
-    $port //= $self->port;
-    return $self
-      unless $self->broker_id && $port;    # nothing to do if dont have those
-    $self->{id} = Mojo::IOLoop->client(
-        { address => '127.0.0.1', port => $self->port, timeout => 2 } => sub {
+    my $self = shift;
+    weaken $self;
+    $self->{_connection_timeout_id} = Mojo::IOLoop->timer(
+        $self->rename_timeout => sub {
+            Mojo::IOLoop->remove( delete $self->{_connection_timeout_id} );
+            $self->emit('rename_timeout');
+        }
+    );
+    $self->{_client} = Mojo::IOLoop->client(
+        {
+            address => '127.0.0.1',
+            port    => $self->port,
+            timeout => $self->connection_timeout
+        } => sub {
             my ( $loop, $err, $stream ) = @_;
             if ($stream) {
-                my $pndg = '';             # pending data
-                $stream->timeout(0);       # permanent
+                my $pndg = '';          # pending data
+                $stream->timeout(0);    # permanent
                 $stream->on(
                     read => sub {
                         my ( $stream, $bytes ) = @_;
                         return unless defined $bytes;
                         my @msgs = split /\n/, $pndg . $bytes,
-                          -1;              # keep last separator
+                          -1;           # keep last separator
                         $pndg = pop @msgs // '';
                         for my $msg (@msgs) {
                             next unless $msg && $msg =~ /(\w)/;
@@ -40,6 +49,8 @@ sub connect {
                             }
                             elsif ( $cmd eq 'A' ) {    # name acknowledged
                                 $self->connected(1);
+                                Mojo::IOLoop->remove(
+                                    delete $self->{_connection_timeout_id} );
                             }
                         }
                     }
@@ -49,17 +60,19 @@ sub connect {
 
                         # say STDERR "stream closed";
                         delete $self->{_stream};
-                        $self->emit('disconnected') if $self->connected;
-                        $self->connected(0);
+                        if ( $self->connected ) {
+                            $self->connected(0);
+                            $self->emit('disconnected');
+                        }
                     }
                 );
                 $stream->on(
                     error => sub {
-
-                        # say STDERR "stream error";
                         delete $self->{_stream};
-                        $self->emit('disconnected') if $self->connected;
-                        $self->connected(0);
+                        if ( $self->connected ) {
+                            $self->connected(0);
+                            $self->emit('disconnected');
+                        }
                     }
                 );
 
@@ -70,10 +83,12 @@ sub connect {
                 $self->{_stream} = $aux_stream;    # for interprocess emits
                 weaken( $self->{_stream} );
             }
+            else {
+                Mojo::IOLoop->remove( delete $self->{_connection_timeout_id} );
+                $self->emit('connection_timeout');
+            }
         }
     );
-
-    weaken $self;
     return $self;
 }
 
