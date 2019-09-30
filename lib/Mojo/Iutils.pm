@@ -7,7 +7,7 @@ use File::Spec::Functions 'tmpdir';
 use File::HomeDir;
 use Mojo::IOLoop;
 use Mojo::File 'path';
-use Mojo::Util qw/steady_time/;
+use Mojo::Util qw/steady_time monkey_patch/;
 use Mojo::SQLite;
 use Mojo::Iutils::Client;
 use Mojo::Iutils::Server;
@@ -19,6 +19,10 @@ use constant {
     DEBUG           => $ENV{MOJO_IUTILS_DEBUG} || 0,
 };
 our $VERSION = '0.09';
+
+# subclass overriding
+monkey_patch 'Mojo::Iutils::Client', read_ievents => \&read_ievents;
+monkey_patch 'Mojo::Iutils::Server', read_ievents => \&read_ievents;
 
 has db_file => sub {
     my $self = shift;
@@ -46,6 +50,8 @@ has purge_interval     => sub { 10 };     # check purges on table iemits
 has connection_timeout => sub { 2 };      # refused connection
 has rename_timeout =>
   sub { shift->connection_timeout + 2 };    # when server doesnt ack rename
+has wait_running_timeout =>
+  sub { shift->rename_timeout + 2 };        # will wait for a new object running
 has integrity_interval => sub { 5 };        # server checks port ok
 has [qw(base_dir use_temp_dir sender_counter receiver_counter)];
 
@@ -126,6 +132,12 @@ sub _check_n_get_server_port {
       $db->select( __mb_global_ints => ['value'], { key => 'port' } )
       ->hashes->first->{value} // 0;
     $self->{_server_port} = $broker_port > 0 ? $broker_port : undef;
+
+    # say STDERR "Leyo tabla __mb_global_ints, broker_id: "
+    #   . $self->{_broker_id}
+    #   . ", puerto leido: "
+    #   . $broker_port;
+
     return !!$self->{_server_port};
 }
 
@@ -135,7 +147,7 @@ sub _get_last_ievents_id {
         sqlite_sequence => 'seq',
         { name => '__mb_ievents' }
     )->hashes->first // { seq => 0 };
-    $self->{_lieid} //= $last_row->{seq};
+    $self->{_last_ievents_id} = $last_row->{seq};
 
     # say STDERR "Leyo last id en tabla: " . $last_row->{seq};
     return $self;
@@ -170,21 +182,30 @@ sub read_ievents {
     my $self = shift;
     weaken $self;
     say STDERR "run read_ievents";
-    $self->sqlite->db->query(
+    my $parent = $self->can('parent_instance') ? $self->parent_instance : $self;
+    $parent->sqlite->db->query(
 'select id, target, event, args from __mb_ievents where id > ? and target in (?,?) and origin <> ? order by id',
-        $self->{_lieid},
-        $self->{_broker_id},
+        $parent->{_last_ievents_id},
+        $parent->{_broker_id},
         0,
-        $self->{_broker_id}
+        $parent->{_broker_id}
     )->expand( json => 'args' )->hashes->each(
         sub {
             my $e = shift;
-            $self->emit( $e->{event}, @{ $e->{args} } )
-              if $self->{events}{ $e->{event} };
-            $self->{receiver_counter}++;
-            $self->{_lieid} = $e->{id};
+            say STDERR "... y tiene para emitir un evento: " . $e->{event};
+            $parent->emit( $e->{event}, @{ $e->{args} } )
+              if $parent->{events}{ $e->{event} };
+            $parent->{receiver_counter}++;
+            $parent->{_last_ievents_id} = $e->{id};
         }
     );
+
+    # note that $self->broker_id is client's or server's broker_id
+}
+
+sub running {
+    my $self = shift;
+    return 1 == !!$self->server->port + !!$self->client->connected;
 }
 
 sub _pool {
@@ -262,27 +283,46 @@ sub _integrity_pool {
 }
 
 sub _connect {
+    my ( $package, $filename, $line ) = caller;
     my $self = shift;
     weaken $self;
-    say STDERR "llamo a _connect";
+
+    # say STDERR "llamo a _connect desde $line, broker_id: "
+    #   . $self->{_broker_id};
     my $db = $self->sqlite->db;
     if ( $self->_check_n_get_server_port ) {
+
+        undef $self->{client};
+
+        # say STDERR "Intenta conectar desde linea $line "
+        #   . " (broker_id  "
+        #   . $self->{_broker_id}
+        #   . " ) a puerto "
+        #   . $self->{_server_port};
         $self->client(
-            broker_id => $self->{_broker_id},
-            port      => $self->{_server_port}
-        )->connect->on( disconnect => sub { $self->_connect_pool } );
+            broker_id       => $self->{_broker_id},
+            port            => $self->{_server_port},
+            parent_instance => $self
+        )->connect->on( disconnected => sub { $self->_connect_pool } );
         $self->client->on(
             connection_timeout => sub {
 
                 # this is a problem. As a client, we were not able to
                 # connect to the specified port, so we assume that the server
                 # is not running
+
+                say STDERR "Hubo un connection timeout, broker_id: "
+                  . $self->{_broker_id}
+                  . ", que trato de conectarse al puerto: "
+                  . $self->{_server_port};
+
                 $db->update(
                     __mb_global_ints => { value => 0 },
-                    { key => 'port' }
+                    { key => 'port', value => $self->{_server_port} }
                 );
 
-                # and retry connection now (probably as a server)
+               # note that if port value changes, last sentence will not update!
+               # and retry connection now (probably as a server)
                 $self->_connect_pool;
             }
         );
@@ -304,16 +344,31 @@ sub _connect {
     elsif ($self->_check_n_get_server_lock
         || $self->_check_n_get_server_TO_lock )
     {
-        if ( my $port =
-            $self->server( broker_id => $self->{_broker_id} )->start->port )
+        undef $self->{server};
+        if (
+            my $port = $self->server(
+                broker_id       => $self->{_broker_id},
+                parent_instance => $self
+            )->start->port
+          )
         {
             # we are the server
+            say STDERR "We are the server, broker_id: "
+              . $self->{_broker_id}
+              . ", nuevo puerto servidor: "
+              . $port;
             $db->update(
                 __mb_global_ints => { value => $port },
                 { key => 'port' }
             );
+            $self->{_server_port} = $port;
             $self->_purge_events_pool;
-            $self->_server_integrity_check;
+
+            # my $integrity_result = $self->_server_integrity_check;
+            # say STDERR "Resultado del Integrity test: "
+            #   . $integrity_result
+            #   . ", broker_id: "
+            #   . $self->{_broker_id};
         }
         else {
             # this is a problem. As a server, we were not able to
@@ -337,7 +392,8 @@ sub _connect_pool {
     undef $self->{server};    # will DESTROY server if exists
     my $connect_small_loop;
     $connect_small_loop = sub {
-        $self->_connect;
+        $self->_connect
+          unless $self->running;
         Mojo::IOLoop->remove( $self->{_connect_id} )
           if $self->{_connect_id};
         $self->{_connect_id} =
@@ -370,8 +426,14 @@ sub iemit {
         my $nc = $self->{_broker_id};
 
         # say STDERR "client $nc enviara $dest S";
-        $self->{_stream}->write("$dest S\n");
-        $self->{sender_counter}++;
+        if ( $self->client->connected ) {
+            $self->client->sync_remotes( $self->{_broker_id}, 0 );
+            $self->{sender_counter}++;
+        }
+        elsif ( $self->server->port ) {
+            $self->server->sync_remotes( $self->{_broker_id}, 0 );
+            $self->{sender_counter}++;
+        }
     }
     return $self;
 }
@@ -414,6 +476,13 @@ drop table if exists __mb_global_ints;}
     # set purge interval
     $self->{_connection_wait} = 0;
     $self->_connect_pool;
+
+    my $end = 0;
+    my $tid = Mojo::IOLoop->timer(
+        $self->wait_running_timeout => sub { $end = 1; shift->stop } );
+    Mojo::IOLoop->one_tick while !( $self->running || $end );
+    Mojo::IOLoop->remove($tid);
+
     return $self;
 }
 

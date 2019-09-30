@@ -7,17 +7,17 @@ BEGIN {
 }
 use Test2::IPC;
 use Test2::V0;
-use Mojo::Iutils::Minibroker;
+use Mojo::Iutils;
 use Mojo::File 'path';
 use Time::HiRes qw /sleep time/;
 
-$ENV{MOJO_MODE}            = 'test';
-$ENV{MOJO_MINIBROKER_NAME} = 'mojotest';
+$ENV{MOJO_MODE}        = 'test';
+$ENV{MOJO_IUTILS_NAME} = 'mojotest';
 ### DB initialization. Avoid instatiate DBD::SQLite in parent before forks
 die "fork: $!" unless defined(my $init_pid = fork);
 if ($init_pid) { wait() }    # block until DB is initialized
 else {
-  my $m  = Mojo::Iutils::Minibroker->new;
+  my $m  = Mojo::Iutils->new;
   my $db = $m->sqlite->db;
   $db->query('drop table if exists auxtable');
   $db->query('
@@ -47,7 +47,7 @@ for my $nfork (1 .. $cforks) {
   # NO tests inside child code pls
 
   my @evs;
-  my $m  = Mojo::Iutils::Minibroker->new;
+  my $m  = Mojo::Iutils->new;
   my $db = $m->sqlite->db;
   my $server_started;
 
@@ -120,7 +120,7 @@ for my $nfork (1 .. $cforks) {
 }
 
 # after all childs forked, it is safe to use DBD::SQLite in parent
-my $m   = Mojo::Iutils::Minibroker->new;
+my $m   = Mojo::Iutils->new;
 my $db  = $m->sqlite->db;
 my $srv = $m->server;
 $srv->start;

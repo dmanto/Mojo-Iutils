@@ -10,6 +10,10 @@ use Mojo::IOLoop;
 has 'port';
 has 'broker_id';
 has 'connected';
+has
+  parent_instance =>
+  sub { Carp::confess('parent_instance is required in constructor') },
+  weak => 1;
 has connection_timeout => sub { 2 };
 has rename_timeout     => sub { shift->connection_timeout + 1 };
 

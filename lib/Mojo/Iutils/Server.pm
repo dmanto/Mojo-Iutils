@@ -7,9 +7,14 @@ use Mojo::Util qw/steady_time/;
 use Mojo::File;
 use Mojo::IOLoop;
 use Time::HiRes qw/sleep time/;
+use Data::Dumper;
 
 has 'port';
 has 'broker_id';
+has
+  parent_instance =>
+  sub { Carp::confess('parent_instance is required in constructor') },
+  weak => 1;
 
 # minimallist broker server
 # Protocol definition:
@@ -115,6 +120,7 @@ sub sync_remotes {
 
     # include own client in broadcast case
     push @dests, $self->{broker_id} unless $dst;
+    say STDERR "--- dests: " . join( ', ', @dests );
 
     # say STDERR $ddd;
     for my $dp (@dests) {
