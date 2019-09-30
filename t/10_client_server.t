@@ -60,20 +60,20 @@ is keys %{$s1->{_conns}}, 2, "client 4 immediatelly disconnected";
 $c2->sync_remotes(undef, 0);
 
 $end = 0;
-$tid = Mojo::IOLoop->timer(0.1 => sub { $end = 1; shift->stop });
-Mojo::IOLoop->one_tick while !(@events >= 2 || $end);
+$tid = Mojo::IOLoop->timer(1 => sub { $end = 1; shift->stop });
+Mojo::IOLoop->one_tick while !(@events || $end);
 Mojo::IOLoop->remove($tid);
-ok @events == 2, "s1 & c3 ievents received";
-is_deeply [sort @events], [1, 3], "right ievents received for c2 emits";
+ok @events == 1, "c3 ievent received";
+is_deeply [sort @events], [3], "right ievent received for c2 emits";
 
 @events = ();
 $c3->sync_remotes(undef, 0);
 $end = 0;
 $tid = Mojo::IOLoop->timer(0.1 => sub { $end = 1; shift->stop });
-Mojo::IOLoop->one_tick while !(@events >= 2 || $end);
+Mojo::IOLoop->one_tick while !(@events || $end);
 Mojo::IOLoop->remove($tid);
-ok @events == 2, "s1 & c2 ievents received";
-is_deeply [sort @events], [1, 2], "right ievents received for c3 emits";
+ok @events == 1, "c2 ievent received";
+is_deeply [sort @events], [2], "right ievents received for c3 emits";
 
 @events = ();
 $s1->sync_remotes(1, 0);

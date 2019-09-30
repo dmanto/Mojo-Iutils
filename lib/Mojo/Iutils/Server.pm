@@ -120,12 +120,12 @@ sub sync_remotes {
 
     # include own client in broadcast case
     push @dests, $self->{broker_id} unless $dst;
-    say STDERR "--- dests: " . join( ', ', @dests );
+    # say STDERR "--- dests: " . join( ', ', @dests );
 
     # say STDERR $ddd;
     for my $dp (@dests) {
         next if $dp eq $orig;    # ignore syncs to requester
-        $self->read_ievents && next
+        $self->read_ievents, next
           if $dp eq $self->{broker_id};    # dest is own client
         next
           unless $self->{_conns}{$dp};     # ignore not connected

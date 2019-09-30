@@ -21,7 +21,6 @@ sub read_ievents { croak 'Method "read_ievents" not implemented by parent' }
 
 sub connect {
     my $self = shift;
-    weaken $self;
     $self->{_connection_timeout_id} = Mojo::IOLoop->timer(
         $self->rename_timeout => sub {
             Mojo::IOLoop->remove( delete $self->{_connection_timeout_id} );
@@ -62,7 +61,6 @@ sub connect {
                 $stream->on(
                     close => sub {
 
-                        # say STDERR "stream closed";
                         delete $self->{_stream};
                         if ( $self->connected ) {
                             $self->connected(0);
@@ -93,6 +91,7 @@ sub connect {
             }
         }
     );
+    weaken $self;
     return $self;
 }
 

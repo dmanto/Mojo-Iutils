@@ -74,14 +74,14 @@ sub server {
 # the <0> value should allow other servers lock it and to start running
 sub _cleanup {
     my $self = shift;
-    return $self unless $self->server_port;
+    return $self unless $self->{_server_port};
     my $db = $self->sqlite->db;
     my $r  = $db->update(
         __mb_global_ints => { value => 0 },
-        { key => 'port', value => $self->server_port }
+        { key => 'port', value => $self->{_server_port} }
     );
     return $self unless $r->sth->rows;    # amount of updated rows (0 or 1)
-    $self->server_port(undef);
+    $self->{_server_port} = undef;
     Mojo::IOLoop->remove( $self->{_server_id} );
     Mojo::IOLoop->remove( $self->{_purger_id} );
     return $self;
@@ -181,7 +181,6 @@ sub _generate_broker_id {
 sub read_ievents {
     my $self = shift;
     weaken $self;
-    say STDERR "run read_ievents";
     my $parent = $self->can('parent_instance') ? $self->parent_instance : $self;
     $parent->sqlite->db->query(
 'select id, target, event, args from __mb_ievents where id > ? and target in (?,?) and origin <> ? order by id',
@@ -192,7 +191,6 @@ sub read_ievents {
     )->expand( json => 'args' )->hashes->each(
         sub {
             my $e = shift;
-            say STDERR "... y tiene para emitir un evento: " . $e->{event};
             $parent->emit( $e->{event}, @{ $e->{args} } )
               if $parent->{events}{ $e->{event} };
             $parent->{receiver_counter}++;
@@ -229,7 +227,6 @@ sub purge_events {
     $self->sqlite->db->query(
         "delete from __mb_ievents where created <= datetime('now', ?)",
         -$self->purge_threshold . " seconds" );
-    say STDERR "Llamo a purge_events";
     return $self;
 }
 
@@ -311,10 +308,10 @@ sub _connect {
                 # connect to the specified port, so we assume that the server
                 # is not running
 
-                say STDERR "Hubo un connection timeout, broker_id: "
-                  . $self->{_broker_id}
-                  . ", que trato de conectarse al puerto: "
-                  . $self->{_server_port};
+                # say STDERR "Hubo un connection timeout, broker_id: "
+                #   . $self->{_broker_id}
+                #   . ", que trato de conectarse al puerto: "
+                #   . $self->{_server_port};
 
                 $db->update(
                     __mb_global_ints => { value => 0 },
@@ -353,10 +350,10 @@ sub _connect {
           )
         {
             # we are the server
-            say STDERR "We are the server, broker_id: "
-              . $self->{_broker_id}
-              . ", nuevo puerto servidor: "
-              . $port;
+            # say STDERR "We are the server, broker_id: "
+            #   . $self->{_broker_id}
+            #   . ", nuevo puerto servidor: "
+            #   . $port;
             $db->update(
                 __mb_global_ints => { value => $port },
                 { key => 'port' }
@@ -490,14 +487,17 @@ sub DESTROY {
     my $self = shift;
     return () if Mojo::Util::_global_destruction();
     if ( $self->{_purge_id} ) {
-        say( "removera purge_id: ", $self->{_purge_id} );
+
+        # say( "removera purge_id: ", $self->{_purge_id} );
         Mojo::IOLoop->remove( $self->{_purge_id} );
     }
     if ( $self->{_pool_id} ) {
-        say( "removera pool_id: ", $self->{_pool_id} );
+
+        # say( "removera pool_id: ", $self->{_pool_id} );
         Mojo::IOLoop->remove( $self->{_pool_id} );
     }
-    say "Llamo al DESTROY de Mojo::Iutils";
+
+    # say "Llamo al DESTROY de Mojo::Iutils";
 }
 1;
 
