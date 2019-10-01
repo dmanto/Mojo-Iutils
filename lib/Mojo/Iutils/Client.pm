@@ -91,6 +91,7 @@ sub connect {
             }
         }
     );
+
     weaken $self;
     return $self;
 }
@@ -103,7 +104,7 @@ sub sync_remotes {
 sub _cleanup {
     my $self = shift;
     $self->connected(0);    # no disconnected events on destroy
-    $self->{_stream}->close if $self->{_stream};
+    $self->{_stream}->close_gracefully if $self->{_stream};
 }
 
 sub DESTROY {

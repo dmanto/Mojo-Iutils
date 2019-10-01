@@ -50,6 +50,7 @@ sub read_ievents { croak 'Method "read_ievents" not implemented by parent' }
 
 sub start {
     my $self = shift;
+
     weaken $self;
     $self->{_conns}     = {};
     $self->{_server_id} = Mojo::IOLoop->server(
@@ -119,19 +120,15 @@ sub sync_remotes {
       : keys %{ $self->{_conns} };
 
     # include own client in broadcast case
-    push @dests, $self->{broker_id} unless $dst;
+    push @dests, $self->broker_id unless $dst;
+
     # say STDERR "--- dests: " . join( ', ', @dests );
 
     # say STDERR $ddd;
     for my $dp (@dests) {
-        next if $dp eq $orig;    # ignore syncs to requester
-        $self->read_ievents, next
-          if $dp eq $self->{broker_id};    # dest is own client
-        next
-          unless $self->{_conns}{$dp};     # ignore not connected
-
-        # say STDERR "server enviara SYNC command";
-        $self->{_conns}{$dp}->write("S\n");
+        if    ( $dp eq $orig )            { }
+        elsif ( $dp eq $self->broker_id ) { $self->read_ievents }
+        elsif ( $self->{_conns}{$dp} )    { $self->{_conns}{$dp}->write("S\n") }
     }
 }
 
@@ -140,7 +137,7 @@ sub _cleanup {
 
     # say STDERR "Llama server DESTROY";
     $self->{_conns}{$_} && $self->{_conns}{$_}->DESTROY
-      for keys %{ $self->{_conns} };       # server stops
+      for keys %{ $self->{_conns} };    # server stops
     Mojo::IOLoop->remove( $self->{_server_id} )
       if $self->{_server_id};
 }

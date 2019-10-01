@@ -52,7 +52,8 @@ has rename_timeout =>
   sub { shift->connection_timeout + 2 };    # when server doesnt ack rename
 has wait_running_timeout =>
   sub { shift->rename_timeout + 2 };        # will wait for a new object running
-has integrity_interval => sub { 5 };        # server checks port ok
+has integrity_interval      => sub { 5 };   # server checks port ok
+has stop_gracefully_timeout => sub { 10 };  # when cannot stop gracefully
 has [qw(base_dir use_temp_dir sender_counter receiver_counter)];
 
 sub client {
@@ -82,9 +83,25 @@ sub _cleanup {
     );
     return $self unless $r->sth->rows;    # amount of updated rows (0 or 1)
     $self->{_server_port} = undef;
-    Mojo::IOLoop->remove( $self->{_server_id} );
-    Mojo::IOLoop->remove( $self->{_purger_id} );
+    Mojo::IOLoop->remove( $self->{_server_id} ) if $self->{_server_id};
+    Mojo::IOLoop->remove( $self->{_purger_id} ) if $self->{_purger_id};
     return $self;
+}
+
+sub stop_gracefully {
+    my $self = shift;
+    if ( $self->server->port ) {
+        my $end = 0;
+        my $tid = Mojo::IOLoop->timer(
+            $self->stop_gracefully_timeout => sub { $end = 1; shift->stop } );
+        Mojo::IOLoop->one_tick
+          while ( keys %{ $self->server->{_conns} } && !$end );
+        Mojo::IOLoop->remove($tid) if $tid;
+    }
+    elsif ( $self->client->connected ) {
+        $self->client->_cleanup;
+    }
+    $self->_cleanup;
 }
 
 # atomically looks for key 'port' on table __mb_global_ints whith a value of 0,
