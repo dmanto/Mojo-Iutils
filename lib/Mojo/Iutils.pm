@@ -209,7 +209,8 @@ sub read_ievents {
         sub {
             my $e = shift;
             $parent->emit( $e->{event}, @{ $e->{args} } )
-              if $parent->{events}{ $e->{event} };
+            #   if $parent->{events}{ $e->{event} }
+              ;
             $parent->{receiver_counter}++;
             $parent->{_last_ievents_id} = $e->{id};
         }
